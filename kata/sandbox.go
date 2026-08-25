@@ -5,30 +5,34 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 )
 
 // Sandbox tracks a running Kata VM that hosts one or more containers.
 type Sandbox struct {
-	ID       string
-	AllocID  string
-	refCount atomic.Int32
+	ID           string
+	AllocID      string
+	refCount     atomic.Int32
+	cleanupTimer *time.Timer
 }
 
 // SandboxManager maintains the mapping from allocation ID to Kata VM sandbox.
 type SandboxManager struct {
-	mu        sync.Mutex
-	sandboxes map[string]*Sandbox
-	ctr       Containerd
-	logger    hclog.Logger
+	mu           sync.Mutex
+	sandboxes    map[string]*Sandbox
+	ctr          Containerd
+	logger       hclog.Logger
+	cleanupDelay time.Duration
 }
 
-func NewSandboxManager(ctr Containerd, logger hclog.Logger) *SandboxManager {
+func NewSandboxManager(ctr Containerd, logger hclog.Logger, cleanupDelay time.Duration) *SandboxManager {
 	return &SandboxManager{
-		sandboxes: make(map[string]*Sandbox),
-		ctr:       ctr,
-		logger:    logger.Named("sandbox"),
+		sandboxes:    make(map[string]*Sandbox),
+		ctr:          ctr,
+		logger:       logger.Named("sandbox"),
+		cleanupDelay: cleanupDelay,
 	}
 }
 
@@ -43,6 +47,10 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 	defer sm.mu.Unlock()
 
 	if sb, ok := sm.sandboxes[allocID]; ok {
+		if sb.cleanupTimer != nil {
+			sb.cleanupTimer.Stop()
+			sb.cleanupTimer = nil
+		}
 		sb.refCount.Add(1)
 		sm.logger.Info("reusing sandbox", "alloc_id", allocID, "sandbox_id", sb.ID, "refs", sb.refCount.Load())
 		return sb, nil
@@ -87,9 +95,10 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 	return sb, nil
 }
 
-// Release decrements the sandbox reference count and tears down the VM
-// when no more tasks are using it.
-func (sm *SandboxManager) Release(ctx context.Context, allocID string) {
+// Release decrements the sandbox reference count and schedules VM teardown
+// when no more tasks are using it. The delay lets Nomad start poststop tasks
+// inside the allocation's existing VM.
+func (sm *SandboxManager) Release(_ context.Context, allocID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -104,6 +113,30 @@ func (sm *SandboxManager) Release(ctx context.Context, allocID string) {
 		return
 	}
 
+	if sm.cleanupDelay <= 0 {
+		sm.cleanupLocked(allocID, sb)
+		return
+	}
+
+	sm.logger.Info("scheduling sandbox VM cleanup", "alloc_id", allocID, "sandbox_id", sb.ID, "delay", sm.cleanupDelay)
+	sb.cleanupTimer = time.AfterFunc(sm.cleanupDelay, func() {
+		sm.cleanup(allocID, sb)
+	})
+}
+
+func (sm *SandboxManager) cleanup(allocID string, expected *Sandbox) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.cleanupLocked(allocID, expected)
+}
+
+func (sm *SandboxManager) cleanupLocked(allocID string, expected *Sandbox) {
+	sb, ok := sm.sandboxes[allocID]
+	if !ok || sb != expected || sb.refCount.Load() != 0 {
+		return
+	}
+
+	ctx := context.Background()
 	sm.logger.Info("destroying sandbox VM", "alloc_id", allocID, "sandbox_id", sb.ID)
 	sm.ctr.Cleanup(ctx, sb.ID)
 	sm.ctr.DeleteSandboxMetadata(ctx, sb.ID)
@@ -117,6 +150,10 @@ func (sm *SandboxManager) Recover(allocID, sbID string) {
 	defer sm.mu.Unlock()
 
 	if sb, ok := sm.sandboxes[allocID]; ok {
+		if sb.cleanupTimer != nil {
+			sb.cleanupTimer.Stop()
+			sb.cleanupTimer = nil
+		}
 		sb.refCount.Add(1)
 		return
 	}

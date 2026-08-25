@@ -146,6 +146,15 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 		return fmt.Errorf("parsing gc_image_delay %q: %w", gcImageDelay, err)
 	}
 
+	sandboxCleanupDelay := config.SandboxCleanupDelay
+	if sandboxCleanupDelay == "" {
+		sandboxCleanupDelay = defaultSandboxCleanupDelay
+	}
+	cleanupDelay, err := time.ParseDuration(sandboxCleanupDelay)
+	if err != nil {
+		return fmt.Errorf("parsing sandbox_cleanup_delay %q: %w", sandboxCleanupDelay, err)
+	}
+
 	d.config = &config
 
 	if config.ConsulGRPCAddr != "" {
@@ -160,7 +169,7 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 		return fmt.Errorf("connecting to containerd: %w", err)
 	}
 	d.ctr = ctr
-	d.sandboxMgr = NewSandboxManager(d.ctr, d.logger)
+	d.sandboxMgr = NewSandboxManager(d.ctr, d.logger, cleanupDelay)
 	d.eventer = eventer.NewEventer(d.ctx, d.logger)
 
 	if config.GCImage {

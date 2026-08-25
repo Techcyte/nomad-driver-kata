@@ -37,7 +37,7 @@ func testDriverWithRecorder(t *testing.T) (*Driver, *recorder) {
 		Namespace:      defaultNamespace,
 		Runtime:        defaultRuntime,
 	}
-	d.sandboxMgr = NewSandboxManager(rec, d.logger)
+	d.sandboxMgr = NewSandboxManager(rec, d.logger, 0)
 	d.eventer = eventer.NewEventer(d.ctx, d.logger)
 	d.imagePullTimeout = 5 * time.Minute
 	return d, rec
@@ -2441,7 +2441,7 @@ func TestImageGCTickerInterval(t *testing.T) {
 	rec := newRecorder()
 	rec.garbageCollectCount = 0
 	d.ctr = rec
-	d.sandboxMgr = NewSandboxManager(rec, d.logger)
+	d.sandboxMgr = NewSandboxManager(rec, d.logger, 0)
 	d.config = &PluginConfig{GCImage: true}
 
 	ctx, cancel := context.WithCancel(context.Background())

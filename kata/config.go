@@ -8,25 +8,27 @@ const (
 	pluginName    = "kata"
 	pluginVersion = "0.1.0"
 
-	defaultContainerdAddr   = "/run/docker/containerd/containerd.sock"
-	defaultNamespace        = "default"
-	defaultPauseImage       = "registry.k8s.io/pause:3.9"
-	defaultRuntime          = "io.containerd.kata.v2"
-	defaultImagePullTimeout = "5m"
-	defaultGCImageDelay     = "3m"
-	taskHandleVersion       = 1
+	defaultContainerdAddr      = "/run/docker/containerd/containerd.sock"
+	defaultNamespace           = "default"
+	defaultPauseImage          = "registry.k8s.io/pause:3.9"
+	defaultRuntime             = "io.containerd.kata.v2"
+	defaultImagePullTimeout    = "5m"
+	defaultGCImageDelay        = "3m"
+	defaultSandboxCleanupDelay = "2m"
+	taskHandleVersion          = 1
 )
 
 // PluginConfig holds driver-level settings from the Nomad client config.
 type PluginConfig struct {
-	ContainerdAddr   string `codec:"containerd_addr"`
-	Namespace        string `codec:"namespace"`
-	PauseImage       string `codec:"pause_image"`
-	Runtime          string `codec:"runtime"`
-	ImagePullTimeout string `codec:"image_pull_timeout"`
-	GCImage          bool   `codec:"gc_image"`
-	GCImageDelay     string `codec:"gc_image_delay"`
-	ConsulGRPCAddr   string `codec:"consul_grpc_addr"`
+	ContainerdAddr      string `codec:"containerd_addr"`
+	Namespace           string `codec:"namespace"`
+	PauseImage          string `codec:"pause_image"`
+	Runtime             string `codec:"runtime"`
+	ImagePullTimeout    string `codec:"image_pull_timeout"`
+	GCImage             bool   `codec:"gc_image"`
+	GCImageDelay        string `codec:"gc_image_delay"`
+	SandboxCleanupDelay string `codec:"sandbox_cleanup_delay"`
+	ConsulGRPCAddr      string `codec:"consul_grpc_addr"`
 }
 
 // TaskAuth holds credentials for pulling from private registries.
@@ -102,6 +104,10 @@ var pluginConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 	"gc_image_delay": hclspec.NewDefault(
 		hclspec.NewAttr("gc_image_delay", "string", false),
 		hclspec.NewLiteral(`"`+defaultGCImageDelay+`"`),
+	),
+	"sandbox_cleanup_delay": hclspec.NewDefault(
+		hclspec.NewAttr("sandbox_cleanup_delay", "string", false),
+		hclspec.NewLiteral(`"`+defaultSandboxCleanupDelay+`"`),
 	),
 	"consul_grpc_addr": hclspec.NewAttr("consul_grpc_addr", "string", false),
 })

@@ -3,6 +3,7 @@ package kata
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/go-hclog"
 )
@@ -16,7 +17,7 @@ func TestSandboxID(t *testing.T) {
 
 func TestSandboxGetOrCreate(t *testing.T) {
 	rec := newRecorder()
-	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
 	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
@@ -45,7 +46,7 @@ func TestSandboxGetOrCreate(t *testing.T) {
 
 func TestSandboxHostname(t *testing.T) {
 	rec := newRecorder()
-	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
 	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "my-group")
@@ -64,7 +65,7 @@ func TestSandboxHostname(t *testing.T) {
 
 func TestSandboxNetNS(t *testing.T) {
 	rec := newRecorder()
-	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
 	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "/var/run/netns/test", "")
@@ -83,7 +84,7 @@ func TestSandboxNetNS(t *testing.T) {
 
 func TestSandboxCreatesContainerdSandboxMetadata(t *testing.T) {
 	rec := newRecorder()
-	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
 	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
@@ -108,7 +109,7 @@ func TestSandboxCreatesContainerdSandboxMetadata(t *testing.T) {
 
 func TestSandboxReuse(t *testing.T) {
 	rec := newRecorder()
-	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
 	sb1, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
@@ -128,9 +129,9 @@ func TestSandboxReuse(t *testing.T) {
 	}
 }
 
-func TestSandboxRelease(t *testing.T) {
+func TestSandboxReleaseDefersCleanup(t *testing.T) {
 	rec := newRecorder()
-	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 20*time.Millisecond)
 	ctx := context.Background()
 
 	mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
@@ -142,17 +143,62 @@ func TestSandboxRelease(t *testing.T) {
 	}
 
 	mgr.Release(ctx, "alloc-1")
+	if rec.called("Cleanup") || rec.called("DeleteSandboxMetadata") {
+		t.Fatal("sandbox cleanup should be deferred after last ref is released")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for !rec.called("Cleanup") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if !rec.called("Cleanup") {
-		t.Error("expected Cleanup call when last ref released")
+		t.Error("expected Cleanup call after cleanup delay")
 	}
 	if !rec.called("DeleteSandboxMetadata") {
-		t.Error("expected DeleteSandboxMetadata call when last ref released")
+		t.Error("expected DeleteSandboxMetadata call after cleanup delay")
+	}
+}
+
+func TestSandboxReuseCancelsDeferredCleanup(t *testing.T) {
+	rec := newRecorder()
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 20*time.Millisecond)
+	ctx := context.Background()
+
+	first, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	if err != nil {
+		t.Fatalf("GetOrCreate first task: %v", err)
+	}
+	mgr.Release(ctx, "alloc-1")
+
+	second, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	if err != nil {
+		t.Fatalf("GetOrCreate poststop task: %v", err)
+	}
+	if second != first {
+		t.Fatal("poststop task did not reuse sandbox awaiting cleanup")
+	}
+
+	time.Sleep(40 * time.Millisecond)
+	if rec.called("Cleanup") || rec.called("DeleteSandboxMetadata") {
+		t.Fatal("cancelled cleanup destroyed reused sandbox")
+	}
+	if rec.callCount("CreateContainer") != 1 {
+		t.Fatalf("CreateContainer called %d times, want 1", rec.callCount("CreateContainer"))
+	}
+
+	mgr.Release(ctx, "alloc-1")
+	deadline := time.Now().Add(time.Second)
+	for !rec.called("Cleanup") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !rec.called("Cleanup") {
+		t.Error("expected reused sandbox cleanup after final release")
 	}
 }
 
 func TestSandboxRecover(t *testing.T) {
 	rec := newRecorder()
-	mgr := NewSandboxManager(rec, hclog.NewNullLogger())
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 
 	mgr.Recover("alloc-1", "kata-alloc-1-sandbox")
 
