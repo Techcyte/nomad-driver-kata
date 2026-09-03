@@ -331,7 +331,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	succeeded := false
 	defer func() {
 		if !succeeded {
-			d.sandboxMgr.Release(ctx, cfg.AllocID)
+			d.sandboxMgr.Release(ctx, sandbox)
 		}
 	}()
 
@@ -458,6 +458,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	h := &taskHandle{
 		containerID:   containerID,
 		sandboxID:     sandbox.ID,
+		sandbox:       sandbox,
 		allocID:       cfg.AllocID,
 		taskName:      cfg.Name,
 		ctr:           d.ctr,
@@ -510,11 +511,12 @@ func (d *Driver) RecoverTask(handle *drivers.TaskHandle) error {
 		return fmt.Errorf("container %s no longer running", state.ContainerID)
 	}
 
-	d.sandboxMgr.Recover(state.AllocID, state.SandboxID)
+	sandbox := d.sandboxMgr.Recover(state.AllocID, state.SandboxID)
 
 	h := &taskHandle{
 		containerID:   state.ContainerID,
 		sandboxID:     state.SandboxID,
+		sandbox:       sandbox,
 		allocID:       state.AllocID,
 		taskName:      state.TaskName,
 		ctr:           d.ctr,
@@ -600,7 +602,7 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 
 	_ = d.ctr.DeleteTask(ctx, h.containerID)
 	_ = d.ctr.DeleteContainer(ctx, h.containerID)
-	d.sandboxMgr.Release(ctx, h.allocID)
+	d.sandboxMgr.Release(ctx, h.sandbox)
 	os.RemoveAll(d.taskConfigDir(h.allocID, h.taskName))
 	d.tasks.Delete(taskID)
 

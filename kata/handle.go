@@ -14,6 +14,7 @@ import (
 type taskHandle struct {
 	containerID string
 	sandboxID   string
+	sandbox     *Sandbox
 	allocID     string
 	taskName    string
 

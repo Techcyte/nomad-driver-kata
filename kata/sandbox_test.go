@@ -134,15 +134,15 @@ func TestSandboxReleaseDefersCleanup(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 20*time.Millisecond)
 	ctx := context.Background()
 
-	mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sandbox, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
 	mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
 
-	mgr.Release(ctx, "alloc-1")
+	mgr.Release(ctx, sandbox)
 	if rec.called("Cleanup") || rec.called("DeleteSandboxMetadata") {
 		t.Error("sandbox should not be cleaned up while refs remain")
 	}
 
-	mgr.Release(ctx, "alloc-1")
+	mgr.Release(ctx, sandbox)
 	if rec.called("Cleanup") || rec.called("DeleteSandboxMetadata") {
 		t.Fatal("sandbox cleanup should be deferred after last ref is released")
 	}
@@ -168,7 +168,7 @@ func TestSandboxReuseCancelsDeferredCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreate first task: %v", err)
 	}
-	mgr.Release(ctx, "alloc-1")
+	mgr.Release(ctx, first)
 
 	second, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
 	if err != nil {
@@ -186,13 +186,33 @@ func TestSandboxReuseCancelsDeferredCleanup(t *testing.T) {
 		t.Fatalf("CreateContainer called %d times, want 1", rec.callCount("CreateContainer"))
 	}
 
-	mgr.Release(ctx, "alloc-1")
+	mgr.Release(ctx, second)
 	deadline := time.Now().Add(time.Second)
 	for !rec.called("Cleanup") && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	if !rec.called("Cleanup") {
 		t.Error("expected reused sandbox cleanup after final release")
+	}
+}
+
+func TestSandboxReleaseIgnoresPreviousGeneration(t *testing.T) {
+	rec := newRecorder()
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
+	ctx := context.Background()
+
+	previous, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	mgr.Release(ctx, previous)
+	current, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	cleanupCount := rec.callCount("Cleanup")
+
+	mgr.Release(ctx, previous)
+
+	if got := rec.callCount("Cleanup"); got != cleanupCount {
+		t.Fatalf("previous generation release cleaned up current sandbox: got %d cleanup calls, want %d", got, cleanupCount)
+	}
+	if current.refCount.Load() != 1 {
+		t.Fatalf("previous generation release changed current refs: got %d, want 1", current.refCount.Load())
 	}
 }
 

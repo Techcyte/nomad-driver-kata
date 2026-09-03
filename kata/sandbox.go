@@ -98,54 +98,54 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 // Release decrements the sandbox reference count and schedules VM teardown
 // when no more tasks are using it. The delay lets Nomad start poststop tasks
 // inside the allocation's existing VM.
-func (sm *SandboxManager) Release(_ context.Context, allocID string) {
+func (sm *SandboxManager) Release(_ context.Context, sandbox *Sandbox) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sb, ok := sm.sandboxes[allocID]
-	if !ok {
+	sb, ok := sm.sandboxes[sandbox.AllocID]
+	if !ok || sb != sandbox {
 		return
 	}
 
 	remaining := sb.refCount.Add(-1)
 	if remaining > 0 {
-		sm.logger.Info("sandbox still in use", "alloc_id", allocID, "refs", remaining)
+		sm.logger.Info("sandbox still in use", "alloc_id", sandbox.AllocID, "refs", remaining)
 		return
 	}
 
 	if sm.cleanupDelay <= 0 {
-		sm.cleanupLocked(allocID, sb)
+		sm.cleanupLocked(sandbox, sb)
 		return
 	}
 
-	sm.logger.Info("scheduling sandbox VM cleanup", "alloc_id", allocID, "sandbox_id", sb.ID, "delay", sm.cleanupDelay)
+	sm.logger.Info("scheduling sandbox VM cleanup", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID, "delay", sm.cleanupDelay)
 	sb.cleanupTimer = time.AfterFunc(sm.cleanupDelay, func() {
-		sm.cleanup(allocID, sb)
+		sm.cleanup(sandbox, sb)
 	})
 }
 
-func (sm *SandboxManager) cleanup(allocID string, expected *Sandbox) {
+func (sm *SandboxManager) cleanup(sandbox, expected *Sandbox) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.cleanupLocked(allocID, expected)
+	sm.cleanupLocked(sandbox, expected)
 }
 
-func (sm *SandboxManager) cleanupLocked(allocID string, expected *Sandbox) {
-	sb, ok := sm.sandboxes[allocID]
-	if !ok || sb != expected || sb.refCount.Load() != 0 {
+func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) {
+	sb, ok := sm.sandboxes[sandbox.AllocID]
+	if !ok || sb != sandbox || sb != expected || sb.refCount.Load() != 0 {
 		return
 	}
 
 	ctx := context.Background()
-	sm.logger.Info("destroying sandbox VM", "alloc_id", allocID, "sandbox_id", sb.ID)
+	sm.logger.Info("destroying sandbox VM", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID)
 	sm.ctr.Cleanup(ctx, sb.ID)
 	sm.ctr.DeleteSandboxMetadata(ctx, sb.ID)
-	delete(sm.sandboxes, allocID)
+	delete(sm.sandboxes, sandbox.AllocID)
 }
 
 // Recover rebuilds sandbox state from a recovered task handle, without
 // creating anything in containerd. Used after driver restart.
-func (sm *SandboxManager) Recover(allocID, sbID string) {
+func (sm *SandboxManager) Recover(allocID, sbID string) *Sandbox {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -155,11 +155,12 @@ func (sm *SandboxManager) Recover(allocID, sbID string) {
 			sb.cleanupTimer = nil
 		}
 		sb.refCount.Add(1)
-		return
+		return sb
 	}
 
 	sb := &Sandbox{ID: sbID, AllocID: allocID}
 	sb.refCount.Store(1)
 	sm.sandboxes[allocID] = sb
 	sm.logger.Info("recovered sandbox", "alloc_id", allocID, "sandbox_id", sbID)
+	return sb
 }
