@@ -2,13 +2,15 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    { self, nixpkgs }:
+    { nixpkgs, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
         config.allowUnfree = true;
       };
+
+      kataRuntime = pkgs.callPackage ./kata-runtime.nix { };
 
       driverPkg = pkgs.buildGoModule {
         pname = "nomad-driver-kata";
@@ -32,14 +34,20 @@
         };
       };
 
-      integrationTest = import ./tests/integration.nix { inherit pkgs driverPkg; };
+      integrationTest = import ./tests/integration.nix {
+        inherit pkgs driverPkg kataRuntime;
+      };
 
-      integrationVmTest = import ./tests/integration-vm.nix { inherit pkgs driverPkg; };
+      integrationVmTest = import ./tests/integration-vm.nix {
+        inherit pkgs driverPkg kataRuntime;
+      };
 
     in
+    assert kataRuntime.version == "4.1.0";
     {
       packages.${system} = {
         default = driverPkg;
+        kata-runtime = kataRuntime;
         integration-vm = integrationVmTest;
       };
 
@@ -60,7 +68,7 @@
           gotools
           nomad
           containerd
-          kata-runtime
+          kataRuntime
         ];
       };
     };

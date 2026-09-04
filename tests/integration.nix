@@ -4,7 +4,7 @@
 #
 # The job specifications (tests/jobs.nix) and the assertion body
 # (tests/verify.nix) are shared with the NixOS VM test (tests/integration-vm.nix).
-{ pkgs, driverPkg }:
+{ pkgs, driverPkg, kataRuntime }:
 
 let
   jobs = import ./jobs.nix { inherit pkgs; };
@@ -176,9 +176,14 @@ pkgs.writeShellScriptBin "kata-driver-test" ''
   modprobe vhost_net 2>/dev/null || true
   modprobe tun 2>/dev/null || true
 
+  if [ ! -f /etc/kata-containers/configuration.toml ]; then
+    echo "ERROR: /etc/kata-containers/configuration.toml is required"
+    exit 1
+  fi
+
   # Start containerd
   echo "Starting containerd..."
-  PATH="${pkgs.kata-runtime}/bin:$PATH" \
+  PATH="${kataRuntime}/bin:$PATH" \
     ${pkgs.containerd}/bin/containerd \
       --config ${containerdConfig} \
       &>"$TESTDIR/containerd.log" &

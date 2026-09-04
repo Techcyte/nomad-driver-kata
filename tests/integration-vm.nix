@@ -12,7 +12,7 @@
 # The job specifications (tests/jobs.nix) and the assertion body
 # (tests/verify.nix) are shared byte-for-byte with the sudo-based script
 # (tests/integration.nix).
-{ pkgs, driverPkg }:
+{ pkgs, driverPkg, kataRuntime }:
 
 let
   jobs = import ./jobs.nix { inherit pkgs; };
@@ -90,10 +90,16 @@ pkgs.testers.runNixOSTest {
         };
       };
 
+      # Kata accepts KATA_CONF_FILE only when it resolves to a compiled-in
+      # location. Install the Nix-generated configuration through /etc while
+      # all runtime assets remain in the immutable store package.
+      environment.etc."kata-containers/configuration.toml".source =
+        "${kataRuntime}/share/defaults/kata-containers/configuration.toml";
+
       # containerd resolves containerd-shim-kata-v2 through its own PATH, not
       # the PATH of a later Nomad task. The host integration script prepends
       # kata-runtime before starting containerd; do the equivalent here.
-      systemd.services.containerd.path = [ pkgs.kata-runtime ];
+      systemd.services.containerd.path = [ kataRuntime ];
 
       # Nomad single-node server+client. dropPrivileges = false runs the agent
       # as root, which the Kata driver needs to reach root-owned containerd and
@@ -144,12 +150,11 @@ pkgs.testers.runNixOSTest {
       # Kata itself and the networking helpers Nomad's bridge mode requires.
       environment.systemPackages = with pkgs; [
         containerd
-        kata-runtime
         nomad
         jq
         cni-plugins
         iptables
-      ];
+      ] ++ [ kataRuntime ];
 
       # Nomad's bridge fingerprint requires bridge before the agent starts;
       # vhost modules support Kata's vsock/network path.
