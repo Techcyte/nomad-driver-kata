@@ -147,9 +147,15 @@ func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) {
 	sm.mu.Unlock()
 	ctx := context.Background()
 	sm.logger.Info("destroying sandbox VM", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID)
-	sm.ctr.Cleanup(ctx, sb.ID)
-	sm.ctr.DeleteSandboxMetadata(ctx, sb.ID)
+	err := sm.ctr.Cleanup(ctx, sb.ID)
+	if err == nil {
+		err = sm.ctr.DeleteSandboxMetadata(ctx, sb.ID)
+	}
 	sm.mu.Lock()
+	if err != nil {
+		sm.logger.Error("sandbox cleanup failed; allocation remains fenced", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID, "error", err)
+		return
+	}
 	delete(sm.sandboxes, sandbox.AllocID)
 }
 

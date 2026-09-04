@@ -2,6 +2,7 @@ package kata
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,9 +15,38 @@ type blockedCleanup struct {
 	release chan struct{}
 }
 
-func (c *blockedCleanup) Cleanup(ctx context.Context, id string) {
+func (c *blockedCleanup) Cleanup(ctx context.Context, id string) error {
 	close(c.entered)
 	<-c.release
+	return nil
+}
+
+type failedCleanup struct {
+	Containerd
+}
+
+func (c *failedCleanup) Cleanup(ctx context.Context, id string) error {
+	return errors.New("task deletion failed")
+}
+
+func TestSandboxCleanupFailureRetainsAllocation(t *testing.T) {
+	rec := newRecorder()
+	mgr := NewSandboxManager(&failedCleanup{Containerd: rec}, hclog.NewNullLogger(), 0)
+	ctx := context.Background()
+	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Release(ctx, sb)
+	if rec.called("DeleteSandboxMetadata") {
+		t.Fatal("failed cleanup deleted sandbox metadata")
+	}
+	if _, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", ""); err == nil {
+		t.Fatal("failed cleanup allowed sandbox reuse or replacement")
+	}
+	if mgr.Recover("alloc-1", sb.ID) != nil {
+		t.Fatal("failed cleanup allowed sandbox recovery")
+	}
 }
 
 func TestSandboxCleanupDoesNotBlockOtherAllocations(t *testing.T) {

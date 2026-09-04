@@ -213,11 +213,12 @@ func (r *recorder) Metrics(ctx context.Context, id string) (*containerMetrics, e
 	return &containerMetrics{Timestamp: time.Now()}, nil
 }
 
-func (r *recorder) Cleanup(ctx context.Context, id string) {
+func (r *recorder) Cleanup(ctx context.Context, id string) error {
 	r.record("Cleanup", id)
 	r.mu.Lock()
 	delete(r.running, id)
 	r.mu.Unlock()
+	return nil
 }
 
 func (r *recorder) GarbageCollect(ctx context.Context, delay time.Duration) (int, error) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"io"
@@ -54,7 +55,7 @@ type Containerd interface {
 	ExecStreaming(ctx context.Context, id, execID string, cmd []string, tty bool, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 
 	Metrics(ctx context.Context, id string) (*containerMetrics, error)
-	Cleanup(ctx context.Context, id string)
+	Cleanup(ctx context.Context, id string) error
 	GarbageCollect(ctx context.Context, delay time.Duration) (int, error)
 }
 
@@ -610,7 +611,7 @@ func (c *containerdClient) Metrics(ctx context.Context, id string) (*containerMe
 	return parseMetricProto(metric)
 }
 
-func (c *containerdClient) Cleanup(ctx context.Context, id string) {
+func (c *containerdClient) Cleanup(ctx context.Context, id string) error {
 	ctx = c.nsCtx(ctx)
 	started := time.Now()
 	deleteTaskErr := c.deleteTask(ctx, id, containerd.WithProcessKill)
@@ -620,6 +621,7 @@ func (c *containerdClient) Cleanup(ctx context.Context, id string) {
 	c.logger.Info("cleanup results", "container_id", id,
 		"task_delete_elapsed", deletedTask.Sub(started), "task_delete_error", deleteTaskErr,
 		"container_delete_elapsed", deletedContainer.Sub(deletedTask), "container_delete_error", deleteContainerErr)
+	return errors.Join(deleteTaskErr, deleteContainerErr)
 }
 
 func (c *containerdClient) GarbageCollect(ctx context.Context, delay time.Duration) (int, error) {
