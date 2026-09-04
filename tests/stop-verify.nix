@@ -35,6 +35,8 @@ pkgs.writeShellApplication {
     residual_resources() {
       local alloc_id="$1"
       runtime_resources "$alloc_id"
+      ctr -a "$CONTAINERD_SOCK" containers list | grep "$alloc_id" || true
+      ctr -a "$CONTAINERD_SOCK" snapshots list | grep "$alloc_id" || true
       find /run/kata /run/kata-containers -xdev -path "*$alloc_id*" -print 2>/dev/null || true
       find "/tmp/kata-driver/$alloc_id" -mindepth 1 -print 2>/dev/null || true
       findmnt -rn 2>/dev/null | grep "$alloc_id" || true
@@ -43,6 +45,8 @@ pkgs.writeShellApplication {
     has_allocation_resources() {
       local alloc_id="$1"
       has_runtime_resources "$alloc_id" \
+        || ctr -a "$CONTAINERD_SOCK" containers list | grep -q "$alloc_id" \
+        || ctr -a "$CONTAINERD_SOCK" snapshots list | grep -q "$alloc_id" \
         || find /run/kata /run/kata-containers -xdev -path "*$alloc_id*" -print -quit 2>/dev/null | grep -q . \
         || find "/tmp/kata-driver/$alloc_id" -mindepth 1 -print -quit 2>/dev/null | grep -q . \
         || findmnt -rn 2>/dev/null | grep -q "$alloc_id"
@@ -95,15 +99,15 @@ pkgs.writeShellApplication {
       || echo -1)
 
     if [ "$state" != dead ] || [ "$elapsed" -gt 30 ] || has_runtime_resources "$alloc_id"; then
-      echo "[FAIL] forced stop result: state=$state exit=$exit_code elapsed=''${elapsed}s"
+      echo "[FAIL] graceful stop result: state=$state exit=$exit_code elapsed=''${elapsed}s"
       runtime_resources "$alloc_id"
       exit 1
     fi
     if [ "$exit_code" = 255 ] || [ "$exit_code" = -1 ]; then
-      echo "[FAIL] forced stop produced invalid exit status $exit_code"
+      echo "[FAIL] graceful stop produced invalid exit status $exit_code"
       exit 1
     fi
-    echo "[OK] forced stop completed: exit=$exit_code elapsed=''${elapsed}s"
+    echo "[OK] graceful stop completed: exit=$exit_code elapsed=''${elapsed}s"
 
     nomad job stop -purge -detach kata-stop >/dev/null
     for _ in $(seq 1 30); do

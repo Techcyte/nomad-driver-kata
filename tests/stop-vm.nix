@@ -3,6 +3,8 @@
   driverPkg,
   kataRuntime,
   skipTaskStats ? false,
+  traceShim ? false,
+  captureConsole ? false,
 }:
 
 let
@@ -10,6 +12,17 @@ let
   verify = import ./stop-verify.nix { inherit pkgs; };
   containerdSock = "/run/containerd/containerd.sock";
   nomadAddr = "http://127.0.0.1:14646";
+  consoleCapture = pkgs.writeShellScript "capture-guest-console" ''
+    for _ in $(${pkgs.coreutils}/bin/seq 1 1200); do
+      for socket in /run/kata/*/root/console.sock; do
+        if [ -S "$socket" ]; then
+          exec ${pkgs.socat}/bin/socat -u "UNIX-CONNECT:$socket" STDOUT
+        fi
+      done
+      ${pkgs.coreutils}/bin/sleep 0.1
+    done
+    exit 1
+  '';
 
   busyboxImage = pkgs.dockerTools.buildImage {
     name = "docker.io/library/busybox";
@@ -139,6 +152,11 @@ pkgs.testers.runNixOSTest {
     machine.succeed("ctr -a ${containerdSock} image import ${pauseImage}")
     machine.wait_for_unit("nomad.service")
     machine.wait_until_succeeds("nomad node status -address=${nomadAddr}")
+    ${pkgs.lib.optionalString captureConsole ''
+      machine.succeed(
+          "systemd-run --unit=guest-console --property=StandardOutput=file:/run/guest-console.log ${consoleCapture}"
+      )
+    ''}
     machine.succeed(
         "systemd-run --unit=stop-verification sh -c '"
         "${pkgs.coreutils}/bin/env NOMAD_ADDR=${nomadAddr} CONTAINERD_SOCK=${containerdSock} "
@@ -150,17 +168,24 @@ pkgs.testers.runNixOSTest {
         timeout=120,
     )
     print(machine.succeed("cat /run/stop-verification.log"))
+    ${pkgs.lib.optionalString captureConsole ''
+      print(machine.succeed("cat /run/guest-console.log"))
+    ''}
     machine.succeed("test ! -f /run/stop-status")
-    shim_pid = int(machine.succeed(
-        "cat /run/containerd/io.containerd.runtime.v2.task/default/*-sandbox/shim.pid"
-    ).strip())
-    machine.succeed(
-        "systemd-run --unit=shim-exit-trace "
-        f"${pkgs.strace}/bin/strace -f -ttt -e trace=exit,exit_group -o /run/shim-exit.trace -p {shim_pid}"
-    )
+    ${pkgs.lib.optionalString traceShim ''
+      shim_pid = int(machine.succeed(
+          "cat /run/containerd/io.containerd.runtime.v2.task/default/*-sandbox/shim.pid"
+      ).strip())
+      machine.succeed(
+          "systemd-run --unit=shim-exit-trace "
+          f"${pkgs.strace}/bin/strace -f -ttt -e trace=exit,exit_group -o /run/shim-exit.trace -p {shim_pid}"
+      )
+    ''}
     machine.wait_until_succeeds("test -f /run/stop-status", timeout=240)
     print(machine.succeed("cat /run/stop-verification.log"))
-    print(machine.execute("grep -E 'exit_group|exited with|killed by|SIG' /run/shim-exit.trace")[1])
+    ${pkgs.lib.optionalString traceShim ''
+      print(machine.succeed("cat /run/shim-exit.trace"))
+    ''}
     print(machine.execute(
         "journalctl -b --no-pager -o short-monotonic | "
         "grep -E 'agent health check|stop monitor signal|runtime keep alive|shutdown shim|failed to delete task|delete hypervisor|resource clean up'"

@@ -603,9 +603,17 @@ func (c *containerdClient) Metrics(ctx context.Context, id string) (*containerMe
 
 func (c *containerdClient) Cleanup(ctx context.Context, id string) {
 	ctx = c.nsCtx(ctx)
-	_ = c.KillTask(ctx, id, "SIGKILL")
-	_ = c.DeleteTask(ctx, id)
-	_ = c.DeleteContainer(ctx, id)
+	started := time.Now()
+	killErr := c.KillTask(ctx, id, "SIGKILL")
+	killed := time.Now()
+	deleteTaskErr := c.DeleteTask(ctx, id)
+	deletedTask := time.Now()
+	deleteContainerErr := c.DeleteContainer(ctx, id)
+	deletedContainer := time.Now()
+	c.logger.Info("cleanup results", "container_id", id,
+		"kill_elapsed", killed.Sub(started), "kill_error", killErr,
+		"task_delete_elapsed", deletedTask.Sub(killed), "task_delete_error", deleteTaskErr,
+		"container_delete_elapsed", deletedContainer.Sub(deletedTask), "container_delete_error", deleteContainerErr)
 }
 
 func (c *containerdClient) GarbageCollect(ctx context.Context, delay time.Duration) (int, error) {
