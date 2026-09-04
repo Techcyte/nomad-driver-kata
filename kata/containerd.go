@@ -448,6 +448,10 @@ func (c *containerdClient) KillTask(ctx context.Context, id string, signal strin
 }
 
 func (c *containerdClient) DeleteTask(ctx context.Context, id string) error {
+	return c.deleteTask(ctx, id)
+}
+
+func (c *containerdClient) deleteTask(ctx context.Context, id string, opts ...containerd.ProcessDeleteOpts) error {
 	ctx = c.nsCtx(ctx)
 	container, err := c.client.LoadContainer(ctx, id)
 	if err != nil {
@@ -465,7 +469,7 @@ func (c *containerdClient) DeleteTask(ctx context.Context, id string) error {
 		return err
 	}
 
-	_, err = task.Delete(ctx)
+	_, err = task.Delete(ctx, opts...)
 	return err
 }
 
@@ -604,15 +608,12 @@ func (c *containerdClient) Metrics(ctx context.Context, id string) (*containerMe
 func (c *containerdClient) Cleanup(ctx context.Context, id string) {
 	ctx = c.nsCtx(ctx)
 	started := time.Now()
-	killErr := c.KillTask(ctx, id, "SIGKILL")
-	killed := time.Now()
-	deleteTaskErr := c.DeleteTask(ctx, id)
+	deleteTaskErr := c.deleteTask(ctx, id, containerd.WithProcessKill)
 	deletedTask := time.Now()
 	deleteContainerErr := c.DeleteContainer(ctx, id)
 	deletedContainer := time.Now()
 	c.logger.Info("cleanup results", "container_id", id,
-		"kill_elapsed", killed.Sub(started), "kill_error", killErr,
-		"task_delete_elapsed", deletedTask.Sub(killed), "task_delete_error", deleteTaskErr,
+		"task_delete_elapsed", deletedTask.Sub(started), "task_delete_error", deleteTaskErr,
 		"container_delete_elapsed", deletedContainer.Sub(deletedTask), "container_delete_error", deleteContainerErr)
 }
 
