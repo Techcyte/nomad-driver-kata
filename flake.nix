@@ -46,6 +46,11 @@
         inherit pkgs driverPkg kataRuntime;
       };
 
+      stopWithoutStatsVmTest = import ./tests/stop-vm.nix {
+        inherit pkgs driverPkg kataRuntime;
+        skipTaskStats = true;
+      };
+
       runtimePackageTest = import ./tests/runtime-package.nix {
         inherit pkgs kataRuntime;
       };
@@ -58,6 +63,7 @@
         kata-runtime = kataRuntime;
         integration-vm = integrationVmTest;
         stop-vm = stopVmTest;
+        stop-without-stats-vm = stopWithoutStatsVmTest;
       };
 
       checks.${system} = {

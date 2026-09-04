@@ -2,6 +2,7 @@
   pkgs,
   driverPkg,
   kataRuntime,
+  skipTaskStats ? false,
 }:
 
 let
@@ -37,7 +38,7 @@ let
   };
 in
 pkgs.testers.runNixOSTest {
-  name = "nomad-driver-kata-stop";
+  name = "nomad-driver-kata-stop${if skipTaskStats then "-without-stats" else ""}";
 
   nodes.machine =
     { lib, pkgs, ... }:
@@ -107,6 +108,9 @@ pkgs.testers.runNixOSTest {
         runtime = "io.containerd.kata.v2";
       };
       services.nomad.settings.plugin."nomad-driver-kata".config.sandbox_cleanup_delay = lib.mkForce "0s";
+      systemd.services.nomad.environment = lib.mkIf skipTaskStats {
+        NOMAD_KATA_SKIP_TASK_STATS = "1";
+      };
 
       environment.systemPackages = with pkgs; [
         containerd

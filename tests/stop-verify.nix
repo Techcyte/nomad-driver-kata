@@ -40,7 +40,7 @@ pkgs.writeShellApplication {
       findmnt -rn 2>/dev/null | grep "$alloc_id" || true
     }
 
-    has_residual_resources() {
+    has_allocation_resources() {
       local alloc_id="$1"
       has_runtime_resources "$alloc_id" \
         || find /run/kata /run/kata-containers -xdev -path "*$alloc_id*" -print -quit 2>/dev/null | grep -q . \
@@ -107,12 +107,12 @@ pkgs.writeShellApplication {
 
     nomad job stop -purge -detach kata-stop >/dev/null
     for _ in $(seq 1 30); do
-      if ! has_residual_resources "$alloc_id"; then
+      if ! has_allocation_resources "$alloc_id"; then
         break
       fi
       sleep 1
     done
-    if has_residual_resources "$alloc_id"; then
+    if has_allocation_resources "$alloc_id"; then
       echo "[FAIL] delete left allocation-local resources"
       residual_resources "$alloc_id"
       exit 1

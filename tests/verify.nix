@@ -275,9 +275,23 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
 
-  # Stop Phase 1 job to free resources for the focused lifecycle gates.
+  # Stop Phase 1 job and wait for its Kata VM before booting another sandbox.
   nomad job stop -purge -detach kata-driver-test >/dev/null 2>&1 || true
-  sleep 5
+  for i in $(seq 1 45); do
+    if ! pgrep -f "$ALLOC_ID" >/dev/null \
+      && ! ctr -a "$CONTAINERD_SOCK" tasks list 2>/dev/null | grep -q "$ALLOC_ID"; then
+      break
+    fi
+    sleep 1
+  done
+  if pgrep -f "$ALLOC_ID" >/dev/null \
+    || ctr -a "$CONTAINERD_SOCK" tasks list 2>/dev/null | grep -q "$ALLOC_ID"; then
+    echo "[FAIL] Phase 1 sandbox did not stop before focused lifecycle gates"
+    pgrep -af "$ALLOC_ID" || true
+    ctr -a "$CONTAINERD_SOCK" tasks list 2>/dev/null | grep "$ALLOC_ID" || true
+    exit 1
+  fi
+  echo "[OK] Phase 1 sandbox runtime resources stopped"
 
   echo ""
   echo "=== Large stdio and exact exit status verification ==="
@@ -323,14 +337,24 @@ pkgs.writeShellScript "kata-verify" ''
   echo "=== Forced stop and bounded delete verification ==="
   nomad job run -detach "$STOP_JOB"
   STOP_ALLOC=""
+  STOP_READY=false
   for i in $(seq 1 60); do
     STOP_ALLOC=$(nomad job status -json kata-stop 2>/dev/null | jq -r '.[0].Allocations[0].ID // ""' || true)
     if [ -n "$STOP_ALLOC" ]; then
       STOP_STATE=$(nomad alloc status -json "$STOP_ALLOC" 2>/dev/null | jq -r '.TaskStates.sleeper.State // "pending"' || true)
-      if [ "$STOP_STATE" = "running" ]; then break; fi
+      if [ "$STOP_STATE" = "running" ] \
+        && nomad alloc logs "$STOP_ALLOC" sleeper 2>/dev/null | grep -q '^STOP_READY$'; then
+        STOP_READY=true
+        break
+      fi
     fi
     sleep 1
   done
+  if [ "$STOP_READY" != "true" ]; then
+    echo "[FAIL] stop task never reached running readiness"
+    [ -z "$STOP_ALLOC" ] || nomad alloc status "$STOP_ALLOC" 2>/dev/null || true
+    exit 1
+  fi
   STOP_START=$(date +%s)
   nomad job stop -purge -detach kata-stop >/dev/null
   STOP_STATE="running"
