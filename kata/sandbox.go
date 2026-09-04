@@ -16,6 +16,7 @@ type Sandbox struct {
 	AllocID      string
 	refCount     atomic.Int32
 	cleanupTimer *time.Timer
+	cleaning     bool
 }
 
 // SandboxManager maintains the mapping from allocation ID to Kata VM sandbox.
@@ -47,6 +48,9 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 	defer sm.mu.Unlock()
 
 	if sb, ok := sm.sandboxes[allocID]; ok {
+		if sb.cleaning {
+			return nil, fmt.Errorf("sandbox %s is being cleaned up", sb.ID)
+		}
 		if sb.cleanupTimer != nil {
 			sb.cleanupTimer.Stop()
 			sb.cleanupTimer = nil
@@ -136,10 +140,16 @@ func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) {
 		return
 	}
 
+	if sb.cleaning {
+		return
+	}
+	sb.cleaning = true
+	sm.mu.Unlock()
 	ctx := context.Background()
 	sm.logger.Info("destroying sandbox VM", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID)
 	sm.ctr.Cleanup(ctx, sb.ID)
 	sm.ctr.DeleteSandboxMetadata(ctx, sb.ID)
+	sm.mu.Lock()
 	delete(sm.sandboxes, sandbox.AllocID)
 }
 
@@ -150,6 +160,9 @@ func (sm *SandboxManager) Recover(allocID, sbID string) *Sandbox {
 	defer sm.mu.Unlock()
 
 	if sb, ok := sm.sandboxes[allocID]; ok {
+		if sb.cleaning {
+			return nil
+		}
 		if sb.cleanupTimer != nil {
 			sb.cleanupTimer.Stop()
 			sb.cleanupTimer = nil

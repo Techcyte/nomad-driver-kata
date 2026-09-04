@@ -516,6 +516,9 @@ func (d *Driver) RecoverTask(handle *drivers.TaskHandle) error {
 	}
 
 	sandbox := d.sandboxMgr.Recover(state.AllocID, state.SandboxID)
+	if sandbox == nil {
+		return fmt.Errorf("sandbox %s is being cleaned up", state.SandboxID)
+	}
 
 	h := &taskHandle{
 		containerID:   state.ContainerID,
