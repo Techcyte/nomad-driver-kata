@@ -132,6 +132,7 @@ pkgs.testers.runNixOSTest {
             enabled = true;
             bootstrap_expect = 1;
           };
+          telemetry.publish_allocation_metrics = true;
           client = {
             enabled = true;
             cni_path = "${pkgs.cni-plugins}/bin";
@@ -149,6 +150,7 @@ pkgs.testers.runNixOSTest {
         pauseImage = "registry.k8s.io/pause:3.9";
         runtime = "io.containerd.kata.v2";
       };
+      services.nomad.settings.plugin."nomad-driver-kata".config.sandbox_cleanup_delay = lib.mkForce "0s";
 
       # Tools the verify body and image import need on PATH inside the guest, plus
       # Kata itself and the networking helpers Nomad's bridge mode requires.
@@ -197,6 +199,10 @@ pkgs.testers.runNixOSTest {
             "CONTAINERD_SOCK=${containerdSock} "
             "SINGLE_JOB=${jobs.single} "
             "MULTI_VM_JOB=${jobs.multiVm} "
+            "EXIT_IO_JOB=${jobs.exitIo} "
+            "STOP_JOB=${jobs.stop} "
+            "LIFECYCLE_JOB=${jobs.lifecycle} "
+            "RESTART_NOMAD='systemctl restart nomad.service && systemctl is-active --quiet nomad.service' "
             "${verify}",
             timeout=600,
         )

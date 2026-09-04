@@ -49,6 +49,10 @@ let
       bootstrap_expect = 1
     }
 
+    telemetry {
+      publish_allocation_metrics = true
+    }
+
     client {
       enabled  = true
       cni_path = "${pkgs.cni-plugins}/bin"
@@ -61,8 +65,9 @@ let
       config {
         containerd_addr = "/tmp/kata-driver-test/containerd.sock"
         namespace       = "default"
-        pause_image     = "registry.k8s.io/pause:3.9"
-        runtime         = "io.containerd.kata.v2"
+        pause_image           = "registry.k8s.io/pause:3.9"
+        runtime               = "io.containerd.kata.v2"
+        sandbox_cleanup_delay = "0s"
       }
     }
   '';
@@ -257,6 +262,10 @@ pkgs.writeShellScriptBin "kata-driver-test" ''
   export CONTAINERD_SOCK
   export SINGLE_JOB=${jobs.single}
   export MULTI_VM_JOB=${jobs.multiVm}
+  export EXIT_IO_JOB=${jobs.exitIo}
+  export STOP_JOB=${jobs.stop}
+  export LIFECYCLE_JOB=${jobs.lifecycle}
   export NOMAD_LOG="$TESTDIR/nomad.log"
+  export RESTART_NOMAD="kill -HUP $(cat $TESTDIR/nomad.pid) && sleep 3"
   ${verify}
 ''

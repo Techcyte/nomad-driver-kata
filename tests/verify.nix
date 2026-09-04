@@ -10,25 +10,38 @@
 #   CONTAINERD_SOCK  - path to the containerd socket
 #   SINGLE_JOB       - path to the single-VM job HCL   (tests/jobs.nix .single)
 #   MULTI_VM_JOB     - path to the multi-VM job HCL     (tests/jobs.nix .multiVm)
+#   EXIT_IO_JOB      - path to the exit/stdio job HCL   (tests/jobs.nix .exitIo)
+#   STOP_JOB         - path to the forced-stop job HCL  (tests/jobs.nix .stop)
+#   LIFECYCLE_JOB    - path to the cleanup loop job HCL (tests/jobs.nix .lifecycle)
 # Optional:
 #   NOMAD_LOG        - path to a Nomad log file for failure diagnostics; when
 #                      unset (e.g. journald-based VM), log tails are skipped.
+#   RESTART_NOMAD    - command that restarts Nomad and waits until it is ready.
 { pkgs }:
 pkgs.writeShellScript "kata-verify" ''
   set -euo pipefail
 
   export PATH="${
-    pkgs.lib.makeBinPath [ pkgs.nomad pkgs.containerd pkgs.jq ]
+    pkgs.lib.makeBinPath [
+      pkgs.nomad
+      pkgs.containerd
+      pkgs.jq
+      pkgs.curl
+    ]
   }:$PATH"
 
   : "''${NOMAD_ADDR:?NOMAD_ADDR must be set}"
   : "''${CONTAINERD_SOCK:?CONTAINERD_SOCK must be set}"
   : "''${SINGLE_JOB:?SINGLE_JOB must be set}"
   : "''${MULTI_VM_JOB:?MULTI_VM_JOB must be set}"
+  : "''${EXIT_IO_JOB:?EXIT_IO_JOB must be set}"
+  : "''${STOP_JOB:?STOP_JOB must be set}"
+  : "''${LIFECYCLE_JOB:?LIFECYCLE_JOB must be set}"
   export NOMAD_ADDR
 
-  # Optional Nomad log for diagnostics; empty when the caller uses journald.
+  # Optional environment-specific hooks.
   NOMAD_LOG="''${NOMAD_LOG:-}"
+  RESTART_NOMAD="''${RESTART_NOMAD:-}"
   log_tail() {
     # $1 = number of lines. No-op when NOMAD_LOG is unset or missing.
     if [ -n "$NOMAD_LOG" ] && [ -f "$NOMAD_LOG" ]; then
@@ -143,6 +156,42 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
 
+  echo ""
+  echo "=== Streaming exec verification ==="
+  STREAM_STDOUT=$(printf 'STREAM_INPUT\n' | nomad alloc exec -i=true -t=false -task hello "$ALLOC_ID" /bin/sh -c 'read value; echo "OUT:$value"; echo "ERR:$value" >&2; exit 23' 2>"/tmp/kata-stream-stderr"; printf ':%s' "$?")
+  STREAM_STATUS="''${STREAM_STDOUT##*:}"
+  STREAM_STDOUT="''${STREAM_STDOUT%:*}"
+  STREAM_STDERR=$(cat /tmp/kata-stream-stderr)
+  rm -f /tmp/kata-stream-stderr
+  if printf '%s' "$STREAM_STDOUT" | grep -qx 'OUT:STREAM_INPUT' \
+    && printf '%s' "$STREAM_STDERR" | grep -qx 'ERR:STREAM_INPUT' \
+    && [ "$STREAM_STATUS" = "23" ]; then
+    echo "[OK] streaming exec preserved stdin, stdout, stderr, and exit status"
+  else
+    echo "[FAIL] streaming exec result: stdout='$STREAM_STDOUT' stderr='$STREAM_STDERR' status='$STREAM_STATUS'"
+    exit 1
+  fi
+
+  if [ -n "$RESTART_NOMAD" ]; then
+    echo ""
+    echo "=== Driver restart recovery verification ==="
+    eval "$RESTART_NOMAD"
+    for i in $(seq 1 30); do
+      RECOVERY_EXEC=$(nomad alloc exec -i=false -t=false -task hello "$ALLOC_ID" /bin/echo RECOVERY_OK 2>/dev/null || echo "")
+      if [ "$RECOVERY_EXEC" = "RECOVERY_OK" ]; then
+        break
+      fi
+      sleep 2
+    done
+    if [ "$RECOVERY_EXEC" = "RECOVERY_OK" ]; then
+      echo "[OK] running Kata task recovered after driver restart"
+    else
+      echo "[FAIL] running Kata task did not recover after driver restart"
+      nomad alloc status "$ALLOC_ID" 2>/dev/null || true
+      exit 1
+    fi
+  fi
+
   # Signal test
   echo ""
   echo "=== Signal verification ==="
@@ -226,13 +275,115 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
 
-  # Stop Phase 1 job to free resources for Phase 2
+  # Stop Phase 1 job to free resources for the focused lifecycle gates.
+  nomad job stop -purge -detach kata-driver-test >/dev/null 2>&1 || true
+  sleep 5
+
+  echo ""
+  echo "=== Large stdio and exact exit status verification ==="
+  nomad job run -detach "$EXIT_IO_JOB"
+  EXIT_ALLOC=""
+  EXIT_STATUS="pending"
+  for i in $(seq 1 90); do
+    EXIT_ALLOC=$(nomad job status -json kata-exit-io 2>/dev/null | jq -r '.[0].Allocations[0].ID // ""')
+    if [ -n "$EXIT_ALLOC" ]; then
+      EXIT_STATUS=$(nomad alloc status -json "$EXIT_ALLOC" 2>/dev/null | jq -r '.TaskStates.output.State // "pending"')
+      if [ "$EXIT_STATUS" = "dead" ]; then
+        break
+      fi
+    fi
+    sleep 1
+  done
+  EXIT_CODE=$(nomad alloc status -json "$EXIT_ALLOC" | jq -r '[.TaskStates.output.Events[] | select(.Type == "Terminated")][-1].ExitCode // -1')
+  STDOUT_COUNT=$(nomad alloc logs "$EXIT_ALLOC" output 2>/dev/null | grep -c '^STDOUT-' || true)
+  STDERR_COUNT=$(nomad alloc logs -stderr "$EXIT_ALLOC" output 2>/dev/null | grep -c '^STDERR-' || true)
+  if [ "$EXIT_STATUS" = "dead" ] \
+    && [ "$EXIT_CODE" = "42" ] \
+    && [ "$STDOUT_COUNT" = "4096" ] \
+    && [ "$STDERR_COUNT" = "4096" ]; then
+    echo "[OK] large stdout/stderr drained before exact exit status 42"
+  else
+    echo "[FAIL] exit/stdio result: state=$EXIT_STATUS code=$EXIT_CODE stdout=$STDOUT_COUNT stderr=$STDERR_COUNT"
+    nomad alloc status "$EXIT_ALLOC" 2>/dev/null || true
+    exit 1
+  fi
+  nomad job stop -purge -detach kata-exit-io >/dev/null
+  for i in $(seq 1 30); do
+    if ! pgrep -f "$EXIT_ALLOC" >/dev/null; then break; fi
+    sleep 1
+  done
+  if pgrep -f "$EXIT_ALLOC" >/dev/null; then
+    echo "[FAIL] exit/stdio sandbox resources leaked"
+    pgrep -af "$EXIT_ALLOC" || true
+    exit 1
+  fi
+  echo "[OK] exit/stdio sandbox cleaned"
+
+  echo ""
+  echo "=== Forced stop and bounded delete verification ==="
+  nomad job run -detach "$STOP_JOB"
+  STOP_ALLOC=""
+  for i in $(seq 1 60); do
+    STOP_ALLOC=$(nomad job status -json kata-stop 2>/dev/null | jq -r '.[0].Allocations[0].ID // ""' || true)
+    if [ -n "$STOP_ALLOC" ]; then
+      STOP_STATE=$(nomad alloc status -json "$STOP_ALLOC" 2>/dev/null | jq -r '.TaskStates.sleeper.State // "pending"' || true)
+      if [ "$STOP_STATE" = "running" ]; then break; fi
+    fi
+    sleep 1
+  done
+  STOP_START=$(date +%s)
+  nomad job stop -purge -detach kata-stop >/dev/null
+  STOP_STATE="running"
+  for i in $(seq 1 30); do
+    STOP_STATE=$(nomad alloc status -json "$STOP_ALLOC" 2>/dev/null | jq -r '.TaskStates.sleeper.State // "dead"' || echo "dead")
+    if [ "$STOP_STATE" = "dead" ] && ! pgrep -f "$STOP_ALLOC" >/dev/null; then break; fi
+    sleep 1
+  done
+  STOP_ELAPSED=$(( $(date +%s) - STOP_START ))
+  if [ "$STOP_STATE" = "dead" ] && [ "$STOP_ELAPSED" -le 30 ] && ! pgrep -f "$STOP_ALLOC" >/dev/null; then
+    echo "[OK] forced stop and delete completed in ''${STOP_ELAPSED}s"
+  else
+    echo "[FAIL] forced stop/delete result: state=$STOP_STATE elapsed=''${STOP_ELAPSED}s"
+    pgrep -af "$STOP_ALLOC" || true
+    exit 1
+  fi
+
+  echo ""
+  echo "=== Repeated lifecycle cleanup verification ==="
+  for iteration in $(seq 1 10); do
+    nomad job run -detach "$LIFECYCLE_JOB"
+    LIFE_ALLOC=""
+    LIFE_STATE="pending"
+    for i in $(seq 1 60); do
+      LIFE_ALLOC=$(nomad job status -json kata-lifecycle 2>/dev/null | jq -r '.[0].Allocations[0].ID // ""' || true)
+      if [ -n "$LIFE_ALLOC" ]; then
+        LIFE_STATE=$(nomad alloc status -json "$LIFE_ALLOC" 2>/dev/null | jq -r '.TaskStates.once.State // "pending"' || true)
+        if [ "$LIFE_STATE" = "dead" ]; then break; fi
+      fi
+      sleep 1
+    done
+    LIFE_CODE=$(nomad alloc status -json "$LIFE_ALLOC" | jq -r '[.TaskStates.once.Events[] | select(.Type == "Terminated")][-1].ExitCode // -1')
+    if [ "$LIFE_STATE" != "dead" ] || [ "$LIFE_CODE" != "0" ]; then
+      echo "[FAIL] lifecycle iteration $iteration: state=$LIFE_STATE code=$LIFE_CODE"
+      exit 1
+    fi
+    nomad job stop -purge -detach kata-lifecycle >/dev/null
+    for i in $(seq 1 30); do
+      if ! pgrep -f "$LIFE_ALLOC" >/dev/null; then break; fi
+      sleep 1
+    done
+    if pgrep -f "$LIFE_ALLOC" >/dev/null; then
+      echo "[FAIL] lifecycle iteration $iteration leaked sandbox resources"
+      pgrep -af "$LIFE_ALLOC" || true
+      exit 1
+    fi
+  done
+  echo "[OK] 10 lifecycle iterations completed without allocation-local process leaks"
+
   echo ""
   echo "========================================="
   echo "=== Phase 2: Multi-VM Networking ==="
   echo "========================================="
-  nomad job stop -purge -detach kata-driver-test >/dev/null 2>&1 || true
-  sleep 5
 
   echo ""
   echo "=== Submitting multi-VM job ==="
@@ -418,6 +569,25 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
   echo "[OK] poisoned allocation was replaced without same-ID sandbox recreation"
+
+  echo ""
+  echo "=== TaskStats cgroup-v2 verification ==="
+  ALLOC_STATS=""
+  for i in $(seq 1 30); do
+    ALLOC_STATS=$(curl --fail --silent "$NOMAD_ADDR/v1/client/allocation/$HEALTHY_ALLOC/stats" 2>/dev/null || echo "")
+    if echo "$ALLOC_STATS" | jq -e '.Tasks.fetcher.ResourceUsage.MemoryStats.Usage > 0 and .Tasks["fetcher-sidecar"].ResourceUsage.MemoryStats.Usage > 0' >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  echo "$ALLOC_STATS" | jq '.Tasks | with_entries(.value = .value.ResourceUsage)' 2>/dev/null || true
+  if echo "$ALLOC_STATS" | jq -e '.Tasks.fetcher.ResourceUsage.MemoryStats.Usage > 0 and .Tasks["fetcher-sidecar"].ResourceUsage.MemoryStats.Usage > 0' >/dev/null 2>&1; then
+    echo "[OK] Nomad received cgroup-v2 task resource statistics"
+  else
+    echo "[FAIL] client allocation stats did not contain task resource usage"
+    log_tail 100
+    exit 1
+  fi
 
   echo ""
   echo "=== All integration tests passed ==="

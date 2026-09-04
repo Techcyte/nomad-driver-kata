@@ -56,6 +56,114 @@
     }
   '';
 
+  exitIo = pkgs.writeText "exit-io-job.nomad.hcl" ''
+    job "kata-exit-io" {
+      type        = "batch"
+      datacenters = ["dc1"]
+
+      group "test" {
+        restart {
+          attempts = 0
+          mode     = "fail"
+        }
+
+        reschedule {
+          attempts  = 0
+          unlimited = false
+        }
+
+        task "output" {
+          driver = "kata"
+
+          config {
+            image   = "docker.io/library/busybox:latest"
+            command = "sh"
+            args = [
+              "-c",
+              "i=0; while [ $i -lt 4096 ]; do printf 'STDOUT-%04d-abcdefghijklmnopqrstuvwxyz0123456789\\n' $i; printf 'STDERR-%04d-ABCDEFGHIJKLMNOPQRSTUVWXYZ9876543210\\n' $i >&2; i=$((i + 1)); done; exit 42",
+            ]
+          }
+
+          resources {
+            cpu    = 100
+            memory = 64
+          }
+        }
+      }
+    }
+  '';
+
+  stop = pkgs.writeText "stop-job.nomad.hcl" ''
+    job "kata-stop" {
+      type        = "service"
+      datacenters = ["dc1"]
+
+      group "test" {
+        restart {
+          attempts = 0
+          mode     = "fail"
+        }
+
+        reschedule {
+          attempts  = 0
+          unlimited = false
+        }
+
+        task "sleeper" {
+          driver = "kata"
+
+          config {
+            image   = "docker.io/library/busybox:latest"
+            command = "sh"
+            args    = ["-c", "trap 'echo TERM_SEEN; exit 17' TERM; echo STOP_READY; while :; do sleep 1; done"]
+          }
+
+          kill_signal  = "SIGTERM"
+          kill_timeout = "5s"
+
+          resources {
+            cpu    = 100
+            memory = 64
+          }
+        }
+      }
+    }
+  '';
+
+  lifecycle = pkgs.writeText "lifecycle-job.nomad.hcl" ''
+    job "kata-lifecycle" {
+      type        = "batch"
+      datacenters = ["dc1"]
+
+      group "test" {
+        restart {
+          attempts = 0
+          mode     = "fail"
+        }
+
+        reschedule {
+          attempts  = 0
+          unlimited = false
+        }
+
+        task "once" {
+          driver = "kata"
+
+          config {
+            image   = "docker.io/library/busybox:latest"
+            command = "sh"
+            args    = ["-c", "echo LIFECYCLE_OK"]
+          }
+
+          resources {
+            cpu    = 100
+            memory = 64
+          }
+        }
+      }
+    }
+  '';
+
   multiVm = pkgs.writeText "multi-vm-job.nomad.hcl" ''
     job "kata-multi-vm" {
       type        = "batch"
