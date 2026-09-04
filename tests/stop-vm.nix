@@ -119,6 +119,7 @@ pkgs.testers.runNixOSTest {
         cni-plugins
         iptables
         kataRuntime
+        strace
       ];
       boot.kernelModules = [
         "bridge"
@@ -139,9 +140,31 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("nomad.service")
     machine.wait_until_succeeds("nomad node status -address=${nomadAddr}")
     machine.succeed(
-      "env NOMAD_ADDR=${nomadAddr} CONTAINERD_SOCK=${containerdSock} "
-      "STOP_JOB=${jobs.stop} ${pkgs.lib.getExe verify}",
-      timeout=240,
+        "systemd-run --unit=stop-verification sh -c '"
+        "${pkgs.coreutils}/bin/env NOMAD_ADDR=${nomadAddr} CONTAINERD_SOCK=${containerdSock} "
+        "STOP_JOB=${jobs.stop} ${pkgs.lib.getExe verify} >/run/stop-verification.log 2>&1; "
+        "echo $? >/run/stop-status'"
     )
+    machine.wait_until_succeeds(
+        "grep -q 'stop task reached running readiness' /run/stop-verification.log || test -f /run/stop-status",
+        timeout=120,
+    )
+    print(machine.succeed("cat /run/stop-verification.log"))
+    machine.succeed("test ! -f /run/stop-status")
+    shim_pid = int(machine.succeed(
+        "cat /run/containerd/io.containerd.runtime.v2.task/default/*-sandbox/shim.pid"
+    ).strip())
+    machine.succeed(
+        "systemd-run --unit=shim-exit-trace "
+        f"${pkgs.strace}/bin/strace -f -ttt -e trace=exit,exit_group -o /run/shim-exit.trace -p {shim_pid}"
+    )
+    machine.wait_until_succeeds("test -f /run/stop-status", timeout=240)
+    print(machine.succeed("cat /run/stop-verification.log"))
+    print(machine.execute("grep -E 'exit_group|exited with|killed by|SIG' /run/shim-exit.trace")[1])
+    print(machine.execute(
+        "journalctl -b --no-pager -o short-monotonic | "
+        "grep -E 'agent health check|stop monitor signal|runtime keep alive|shutdown shim|failed to delete task|delete hypervisor|resource clean up'"
+    )[1])
+    assert int(machine.succeed("cat /run/stop-status").strip()) == 0
   '';
 }
