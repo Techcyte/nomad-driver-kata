@@ -16,11 +16,14 @@
   pkgs,
   driverPkg,
   kataRuntime,
+  publishAllocationMetrics ? true,
+  restartNomad ? true,
+  restartTask ? true,
 }:
 
 let
   jobs = import ./jobs.nix { inherit pkgs; };
-  verify = import ./verify.nix { inherit pkgs; };
+  verify = import ./verify.nix { inherit pkgs restartTask; };
 
   containerdSock = "/run/containerd/containerd.sock";
   nomadAddr = "http://127.0.0.1:14646";
@@ -132,7 +135,7 @@ pkgs.testers.runNixOSTest {
             enabled = true;
             bootstrap_expect = 1;
           };
-          telemetry.publish_allocation_metrics = true;
+          telemetry.publish_allocation_metrics = publishAllocationMetrics;
           client = {
             enabled = true;
             cni_path = "${pkgs.cni-plugins}/bin";
@@ -202,7 +205,7 @@ pkgs.testers.runNixOSTest {
             "EXIT_IO_JOB=${jobs.exitIo} "
             "STOP_JOB=${jobs.stop} "
             "LIFECYCLE_JOB=${jobs.lifecycle} "
-            "RESTART_NOMAD='systemctl restart nomad.service && systemctl is-active --quiet nomad.service' "
+            "RESTART_NOMAD='${pkgs.lib.optionalString restartNomad "systemctl restart nomad.service && systemctl is-active --quiet nomad.service"}' "
             "${verify}",
             timeout=600,
         )

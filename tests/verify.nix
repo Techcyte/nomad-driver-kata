@@ -17,7 +17,10 @@
 #   NOMAD_LOG        - path to a Nomad log file for failure diagnostics; when
 #                      unset (e.g. journald-based VM), log tails are skipped.
 #   RESTART_NOMAD    - command that restarts Nomad and waits until it is ready.
-{ pkgs }:
+{
+  pkgs,
+  restartTask ? true,
+}:
 pkgs.writeShellScript "kata-verify" ''
   set -euo pipefail
 
@@ -222,59 +225,64 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
 
-  # Kill the main container with a failure exit while its sibling is running.
-  # Nomad must restart only the failed task without disturbing the shared VM.
-  echo ""
-  echo "=== Container restart with live sibling verification ==="
-  TASK_STATES_BEFORE=$(nomad alloc status -json "$ALLOC_ID" | jq '.TaskStates')
-  HELLO_RESTARTS_BEFORE=$(echo "$TASK_STATES_BEFORE" | jq -r '.hello.Restarts')
-  SIDECAR_RESTARTS_BEFORE=$(echo "$TASK_STATES_BEFORE" | jq -r '.sidecar.Restarts')
-  SIDECAR_STARTED_AT_BEFORE=$(echo "$TASK_STATES_BEFORE" | jq -r '.sidecar.StartedAt')
-  ctr -a "$CONTAINERD_SOCK" task kill --signal SIGKILL "kata-$ALLOC_ID-hello"
+  ${pkgs.lib.optionalString restartTask ''
+    # Kill the main container with a failure exit while its sibling is running.
+    # Nomad must restart only the failed task without disturbing the shared VM.
+    echo ""
+    echo "=== Container restart with live sibling verification ==="
+    TASK_STATES_BEFORE=$(nomad alloc status -json "$ALLOC_ID" | jq '.TaskStates')
+    HELLO_RESTARTS_BEFORE=$(echo "$TASK_STATES_BEFORE" | jq -r '.hello.Restarts')
+    SIDECAR_RESTARTS_BEFORE=$(echo "$TASK_STATES_BEFORE" | jq -r '.sidecar.Restarts')
+    SIDECAR_STARTED_AT_BEFORE=$(echo "$TASK_STATES_BEFORE" | jq -r '.sidecar.StartedAt')
+    ctr -a "$CONTAINERD_SOCK" task kill --signal SIGKILL "kata-$ALLOC_ID-hello"
 
-  RESTARTED=false
-  for i in $(seq 1 30); do
-    TASK_STATES_AFTER=$(nomad alloc status -json "$ALLOC_ID" | jq '.TaskStates')
-    HELLO_STATE=$(echo "$TASK_STATES_AFTER" | jq -r '.hello.State')
-    HELLO_RESTARTS_AFTER=$(echo "$TASK_STATES_AFTER" | jq -r '.hello.Restarts')
-    if [ "$HELLO_STATE" = "running" ] && [ "$HELLO_RESTARTS_AFTER" -gt "$HELLO_RESTARTS_BEFORE" ]; then
-      RESTARTED=true
-      break
+    RESTARTED=false
+    for i in $(seq 1 30); do
+      TASK_STATES_AFTER=$(nomad alloc status -json "$ALLOC_ID" | jq '.TaskStates')
+      HELLO_STATE=$(echo "$TASK_STATES_AFTER" | jq -r '.hello.State')
+      HELLO_RESTARTS_AFTER=$(echo "$TASK_STATES_AFTER" | jq -r '.hello.Restarts')
+      TASK_RUNTIME_STATE=$(ctr -a "$CONTAINERD_SOCK" tasks list | awk -v id="kata-$ALLOC_ID-hello" '$1 == id { print $3 }')
+      if [ "$HELLO_STATE" = "running" ] \
+        && [ "$HELLO_RESTARTS_AFTER" -gt "$HELLO_RESTARTS_BEFORE" ] \
+        && [ "$TASK_RUNTIME_STATE" = "RUNNING" ]; then
+        RESTARTED=true
+        break
+      fi
+      sleep 2
+    done
+
+    if [ "$RESTARTED" != "true" ]; then
+      echo "[FAIL] hello container was not restarted: runtime_state=$TASK_RUNTIME_STATE"
+      nomad alloc status "$ALLOC_ID" 2>/dev/null || true
+      log_tail 100
+      exit 1
     fi
-    sleep 2
-  done
 
-  if [ "$RESTARTED" != "true" ]; then
-    echo "[FAIL] hello container was not restarted"
-    nomad alloc status "$ALLOC_ID" 2>/dev/null || true
-    log_tail 100
-    exit 1
-  fi
+    RESTART_EXEC=$(nomad alloc exec -i=false -t=false -task hello "$ALLOC_ID" /bin/echo RESTART_OK 2>/dev/null || echo "")
+    if [ "$RESTART_EXEC" = "RESTART_OK" ]; then
+      echo "[OK] failed hello container restarted and accepts exec"
+    else
+      echo "[FAIL] restarted hello container did not accept exec"
+      nomad alloc status "$ALLOC_ID" 2>/dev/null || true
+      exit 1
+    fi
 
-  RESTART_EXEC=$(nomad alloc exec -i=false -t=false -task hello "$ALLOC_ID" /bin/echo RESTART_OK 2>/dev/null || echo "")
-  if [ "$RESTART_EXEC" = "RESTART_OK" ]; then
-    echo "[OK] failed hello container restarted and accepts exec"
-  else
-    echo "[FAIL] restarted hello container did not accept exec"
-    nomad alloc status "$ALLOC_ID" 2>/dev/null || true
-    exit 1
-  fi
+    SIDECAR_STATE=$(echo "$TASK_STATES_AFTER" | jq -r '.sidecar.State')
+    SIDECAR_RESTARTS_AFTER=$(echo "$TASK_STATES_AFTER" | jq -r '.sidecar.Restarts')
+    SIDECAR_STARTED_AT_AFTER=$(echo "$TASK_STATES_AFTER" | jq -r '.sidecar.StartedAt')
+    SIDECAR_EXEC=$(nomad alloc exec -i=false -t=false -task sidecar "$ALLOC_ID" /bin/echo SIDECAR_STILL_RUNNING 2>/dev/null || echo "")
+    if [ "$SIDECAR_STATE" = "running" ] \
+      && [ "$SIDECAR_RESTARTS_AFTER" = "$SIDECAR_RESTARTS_BEFORE" ] \
+      && [ "$SIDECAR_STARTED_AT_AFTER" = "$SIDECAR_STARTED_AT_BEFORE" ] \
+      && [ "$SIDECAR_EXEC" = "SIDECAR_STILL_RUNNING" ]; then
+      echo "[OK] sibling sidecar stayed running without restart"
+    else
+      echo "[FAIL] sibling sidecar was interrupted or restarted"
+      nomad alloc status "$ALLOC_ID" 2>/dev/null || true
+      exit 1
+    fi
 
-  SIDECAR_STATE=$(echo "$TASK_STATES_AFTER" | jq -r '.sidecar.State')
-  SIDECAR_RESTARTS_AFTER=$(echo "$TASK_STATES_AFTER" | jq -r '.sidecar.Restarts')
-  SIDECAR_STARTED_AT_AFTER=$(echo "$TASK_STATES_AFTER" | jq -r '.sidecar.StartedAt')
-  SIDECAR_EXEC=$(nomad alloc exec -i=false -t=false -task sidecar "$ALLOC_ID" /bin/echo SIDECAR_STILL_RUNNING 2>/dev/null || echo "")
-  if [ "$SIDECAR_STATE" = "running" ] \
-    && [ "$SIDECAR_RESTARTS_AFTER" = "$SIDECAR_RESTARTS_BEFORE" ] \
-    && [ "$SIDECAR_STARTED_AT_AFTER" = "$SIDECAR_STARTED_AT_BEFORE" ] \
-    && [ "$SIDECAR_EXEC" = "SIDECAR_STILL_RUNNING" ]; then
-    echo "[OK] sibling sidecar stayed running without restart"
-  else
-    echo "[FAIL] sibling sidecar was interrupted or restarted"
-    nomad alloc status "$ALLOC_ID" 2>/dev/null || true
-    exit 1
-  fi
-
+  ''}
   # Stop Phase 1 job and wait for its Kata VM before booting another sandbox.
   nomad job stop -purge -detach kata-driver-test >/dev/null 2>&1 || true
   for i in $(seq 1 45); do

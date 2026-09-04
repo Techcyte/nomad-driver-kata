@@ -398,9 +398,13 @@ func (c *containerdClient) RunTask(ctx context.Context, id string, stdout, stder
 		return -1, fmt.Errorf("waiting for task %s: %w", id, err)
 	}
 
-	if err := task.Start(ctx); err != nil {
+	started := time.Now()
+	c.logger.Info("starting container task", "container_id", id)
+	startErr := task.Start(ctx)
+	c.logger.Info("container task start result", "container_id", id, "elapsed", time.Since(started), "error", startErr)
+	if startErr != nil {
 		task.Delete(ctx)
-		return -1, fmt.Errorf("starting task %s: %w", id, err)
+		return -1, fmt.Errorf("starting task %s: %w", id, startErr)
 	}
 
 	status := <-exitCh

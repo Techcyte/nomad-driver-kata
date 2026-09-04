@@ -62,6 +62,21 @@
         default = driverPkg;
         kata-runtime = kataRuntime;
         integration-vm = integrationVmTest;
+        integration-without-stats-vm = import ./tests/integration-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          publishAllocationMetrics = false;
+        };
+        integration-without-recovery-vm = import ./tests/integration-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          publishAllocationMetrics = false;
+          restartNomad = false;
+        };
+        integration-without-task-restart-vm = import ./tests/integration-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          publishAllocationMetrics = false;
+          restartNomad = false;
+          restartTask = false;
+        };
         stop-vm = stopVmTest;
         stop-without-stats-vm = stopWithoutStatsVmTest;
       };
