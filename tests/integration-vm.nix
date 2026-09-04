@@ -12,7 +12,11 @@
 # The job specifications (tests/jobs.nix) and the assertion body
 # (tests/verify.nix) are shared byte-for-byte with the sudo-based script
 # (tests/integration.nix).
-{ pkgs, driverPkg, kataRuntime }:
+{
+  pkgs,
+  driverPkg,
+  kataRuntime,
+}:
 
 let
   jobs = import ./jobs.nix { inherit pkgs; };
@@ -90,11 +94,11 @@ pkgs.testers.runNixOSTest {
         };
       };
 
-      # Kata accepts KATA_CONF_FILE only when it resolves to a compiled-in
-      # location. Install the Nix-generated configuration through /etc while
-      # all runtime assets remain in the immutable store package.
-      environment.etc."kata-containers/configuration.toml".source =
-        "${kataRuntime}/share/defaults/kata-containers/configuration.toml";
+      # Runtime-rs accepts configuration only from its compiled-in locations.
+      # Install the Nix-generated configuration through /etc while all runtime
+      # assets remain in the immutable store package.
+      environment.etc."kata-containers/runtime-rs/configuration.toml".source =
+        "${kataRuntime}/share/defaults/kata-containers/runtime-rs/configuration.toml";
 
       # containerd resolves containerd-shim-kata-v2 through its own PATH, not
       # the PATH of a later Nomad task. The host integration script prepends
@@ -148,13 +152,16 @@ pkgs.testers.runNixOSTest {
 
       # Tools the verify body and image import need on PATH inside the guest, plus
       # Kata itself and the networking helpers Nomad's bridge mode requires.
-      environment.systemPackages = with pkgs; [
-        containerd
-        nomad
-        jq
-        cni-plugins
-        iptables
-      ] ++ [ kataRuntime ];
+      environment.systemPackages =
+        with pkgs;
+        [
+          containerd
+          nomad
+          jq
+          cni-plugins
+          iptables
+        ]
+        ++ [ kataRuntime ];
 
       # Nomad's bridge fingerprint requires bridge before the agent starts;
       # vhost modules support Kata's vsock/network path.

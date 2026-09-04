@@ -14,11 +14,14 @@ stdenvNoCC.mkDerivation {
   inherit version;
 
   src = fetchurl {
-    url = "https://github.com/kata-containers/kata-containers/releases/download/${version}/kata-go-static-${version}-amd64.tar.zst";
-    hash = "sha256-izIIBCTIhCOO6NUgYP39Bg++K1/fpOuf8ncrOCtDK1U=";
+    url = "https://github.com/kata-containers/kata-containers/releases/download/${version}/kata-static-${version}-amd64.tar.zst";
+    hash = "sha256-Pca2nErLeHuWewS2RZmiDQKovrGo6qswhBEN+dCwjJY=";
   };
 
-  nativeBuildInputs = [ makeWrapper zstd ];
+  nativeBuildInputs = [
+    makeWrapper
+    zstd
+  ];
 
   dontUnpack = true;
 
@@ -33,18 +36,17 @@ stdenvNoCC.mkDerivation {
       --strip-components=3 \
       ./opt/kata
 
-    substituteInPlace "$out/share/defaults/kata-containers/"*.toml \
+    substituteInPlace "$out/share/defaults/kata-containers/runtime-rs/"*.toml \
       --replace-warn '/opt/kata/' "$out/"
+    rm "$out/share/defaults/kata-containers/configuration.toml"
 
-    mkdir -p "$out/libexec/kata-containers"
-    mv "$out/bin/containerd-shim-kata-v2" "$out/libexec/kata-containers/"
-    mv "$out/bin/kata-runtime" "$out/libexec/kata-containers/"
+    mkdir -p "$out/libexec/kata-containers" "$out/bin"
+    mv "$out/runtime-rs/bin/containerd-shim-kata-v2" "$out/libexec/kata-containers/"
     mv "$out/bin/qemu-system-x86_64" "$out/libexec/kata-containers/"
+    rmdir "$out/runtime-rs/bin" "$out/runtime-rs"
 
-    for program in containerd-shim-kata-v2 kata-runtime; do
-      makeWrapper "$out/libexec/kata-containers/$program" "$out/bin/$program" \
-        --set KATA_CONF_FILE "/etc/kata-containers/configuration.toml"
-    done
+    ln -s ../libexec/kata-containers/containerd-shim-kata-v2 \
+      "$out/bin/containerd-shim-kata-v2"
     makeWrapper \
       "$out/libexec/kata-containers/qemu-system-x86_64" \
       "$out/bin/qemu-system-x86_64" \
@@ -54,7 +56,10 @@ stdenvNoCC.mkDerivation {
 
     test "$(cat "$out/VERSION")" = "${version}"
     test -x "$out/bin/containerd-shim-kata-v2"
-    test "$($out/bin/kata-runtime --version | awk 'NR == 1 { print $3 }')" = "${version}"
+    "$out/bin/containerd-shim-kata-v2" --version | grep -F "Kata Containers containerd shim (Rust)"
+    "$out/bin/containerd-shim-kata-v2" --version | grep -F "id: io.containerd.kata.v2"
+    "$out/bin/containerd-shim-kata-v2" --version | grep -F "version: ${version}"
+    test -f "$out/share/defaults/kata-containers/runtime-rs/configuration.toml"
     test -f "$out/share/kata-containers/kata-containers.img"
     test -f "$out/share/kata-containers/vmlinux.container"
 
@@ -63,11 +68,11 @@ stdenvNoCC.mkDerivation {
 
   passthru = {
     inherit version;
-    releaseAsset = "kata-go-static-${version}-amd64.tar.zst";
+    releaseAsset = "kata-static-${version}-amd64.tar.zst";
   };
 
   meta = {
-    description = "Official Kata Containers Go runtime bundle";
+    description = "Official Kata Containers runtime-rs bundle";
     homepage = "https://github.com/kata-containers/kata-containers";
     changelog = "https://github.com/kata-containers/kata-containers/releases/tag/${version}";
     license = lib.licenses.asl20;
