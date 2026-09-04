@@ -25,6 +25,7 @@ type taskHandle struct {
 	completedAt time.Time
 	exitResult  *drivers.ExitResult
 
+	startupCh     chan error
 	doneCh        chan struct{}
 	onSandboxDead func(string)
 	mu            sync.RWMutex
@@ -34,11 +35,20 @@ type taskHandle struct {
 // Blocks until the task exits.
 func (h *taskHandle) run(stdoutPath, stderrPath string) {
 	defer close(h.doneCh)
+	var startup sync.Once
+	notifyStartup := func(err error) {
+		startup.Do(func() {
+			if h.startupCh != nil {
+				h.startupCh <- err
+			}
+		})
+	}
 
 	stdout, stderr, err := h.openLogs(stdoutPath, stderrPath)
 	if err != nil {
 		h.logger.Error("failed to open log files", "error", err)
 		h.setExit(1, err)
+		notifyStartup(err)
 		return
 	}
 	if stdout != nil {
@@ -48,7 +58,10 @@ func (h *taskHandle) run(stdoutPath, stderrPath string) {
 		defer stderr.Close()
 	}
 
-	exitCode, err := h.ctr.RunTask(context.Background(), h.containerID, stdout, stderr)
+	exitCode, err := h.ctr.RunTask(context.Background(), h.containerID, stdout, stderr, func() {
+		notifyStartup(nil)
+	})
+	notifyStartup(err)
 	h.recordExit(exitCode, err)
 }
 

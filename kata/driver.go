@@ -464,13 +464,16 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		ctr:           d.ctr,
 		logger:        d.logger.With("container_id", containerID),
 		startedAt:     time.Now(),
+		startupCh:     make(chan error, 1),
 		doneCh:        make(chan struct{}),
 		onSandboxDead: func(allocID string) { _ = d.markSandboxDead(allocID) },
 	}
 
 	go h.run(cfg.StdoutPath, cfg.StderrPath)
-
-	d.tasks.Set(cfg.ID, h)
+	if err := <-h.startupCh; err != nil {
+		d.ctr.Cleanup(ctx, containerID)
+		return nil, nil, fmt.Errorf("starting task: %w", err)
+	}
 
 	state := &TaskState{
 		ContainerID: containerID,
@@ -487,6 +490,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("setting driver state: %w", err)
 	}
 
+	d.tasks.Set(cfg.ID, h)
 	succeeded = true
 	return handle, buildDriverNetwork(cfg), nil
 }

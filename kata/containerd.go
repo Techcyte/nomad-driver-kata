@@ -43,7 +43,7 @@ type Containerd interface {
 	DeleteContainer(ctx context.Context, id string) error
 
 	StartTaskDetached(ctx context.Context, id string) error
-	RunTask(ctx context.Context, id string, stdout, stderr *os.File) (int, error)
+	RunTask(ctx context.Context, id string, stdout, stderr *os.File, started func()) (int, error)
 	MonitorTask(ctx context.Context, id string, stdout, stderr *os.File) (int, error)
 
 	KillTask(ctx context.Context, id string, signal string) error
@@ -375,7 +375,7 @@ func (c *containerdClient) StartTaskDetached(ctx context.Context, id string) err
 	return nil
 }
 
-func (c *containerdClient) RunTask(ctx context.Context, id string, stdout, stderr *os.File) (int, error) {
+func (c *containerdClient) RunTask(ctx context.Context, id string, stdout, stderr *os.File, started func()) (int, error) {
 	ctx = c.nsCtx(ctx)
 	container, err := c.client.LoadContainer(ctx, id)
 	if err != nil {
@@ -398,14 +398,15 @@ func (c *containerdClient) RunTask(ctx context.Context, id string, stdout, stder
 		return -1, fmt.Errorf("waiting for task %s: %w", id, err)
 	}
 
-	started := time.Now()
+	startTime := time.Now()
 	c.logger.Info("starting container task", "container_id", id)
 	startErr := task.Start(ctx)
-	c.logger.Info("container task start result", "container_id", id, "elapsed", time.Since(started), "error", startErr)
+	c.logger.Info("container task start result", "container_id", id, "elapsed", time.Since(startTime), "error", startErr)
 	if startErr != nil {
 		task.Delete(ctx)
 		return -1, fmt.Errorf("starting task %s: %w", id, startErr)
 	}
+	started()
 
 	status := <-exitCh
 	code, _, err := status.Result()

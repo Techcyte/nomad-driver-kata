@@ -150,8 +150,9 @@ func (r *recorder) StartTaskDetached(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *recorder) RunTask(ctx context.Context, id string, stdout, stderr *os.File) (int, error) {
+func (r *recorder) RunTask(ctx context.Context, id string, stdout, stderr *os.File, started func()) (int, error) {
 	r.record("RunTask", id)
+	started()
 	if r.runCh != nil {
 		<-r.runCh
 	}

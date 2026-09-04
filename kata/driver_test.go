@@ -1221,7 +1221,9 @@ func TestWaitTask(t *testing.T) {
 }
 
 func TestInspectTask(t *testing.T) {
-	d, _ := testDriverWithRecorder(t)
+	d, rec := testDriverWithRecorder(t)
+	rec.runCh = make(chan struct{})
+	defer close(rec.runCh)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -1256,7 +1258,9 @@ func TestWaitTaskNotFound(t *testing.T) {
 }
 
 func TestWaitTaskContextCancellation(t *testing.T) {
-	d, _ := testDriverWithRecorder(t)
+	d, rec := testDriverWithRecorder(t)
+	rec.runCh = make(chan struct{})
+	defer close(rec.runCh)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -1277,7 +1281,7 @@ func TestWaitTaskContextCancellation(t *testing.T) {
 		t.Fatal("expected non-nil exit result")
 	}
 	if result.Err == nil {
-		t.Error("expected context error in ExitResult")
+		t.Fatal("expected context error in ExitResult")
 	}
 	if !strings.Contains(result.Err.Error(), "context canceled") {
 		t.Errorf("error should mention 'context canceled', got: %v", result.Err)
