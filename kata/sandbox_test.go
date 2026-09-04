@@ -148,7 +148,7 @@ func TestSandboxReleaseDefersCleanup(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(time.Second)
-	for !rec.called("Cleanup") && time.Now().Before(deadline) {
+	for (!rec.called("Cleanup") || !rec.called("DeleteSandboxMetadata")) && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	if !rec.called("Cleanup") {
