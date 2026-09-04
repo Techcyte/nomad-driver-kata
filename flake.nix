@@ -42,6 +42,10 @@
         inherit pkgs driverPkg kataRuntime;
       };
 
+      runtimePackageTest = import ./tests/runtime-package.nix {
+        inherit pkgs kataRuntime;
+      };
+
     in
     assert kataRuntime.version == "4.1.0";
     {
@@ -51,7 +55,10 @@
         integration-vm = integrationVmTest;
       };
 
-      checks.${system}.default = driverPkg;
+      checks.${system} = {
+        default = driverPkg;
+        runtime-package = runtimePackageTest;
+      };
 
       apps.${system}.integration-test = {
         type = "app";
