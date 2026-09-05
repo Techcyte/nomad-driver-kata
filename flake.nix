@@ -87,6 +87,38 @@
           captureConsole = true;
           hostCores = 1;
         };
+        startup-trace-vm = import ./tests/stop-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          captureConsole = true;
+          traceBoot = true;
+          hostCores = 1;
+        };
+        startup-disk-store-vm = import ./tests/stop-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          captureConsole = true;
+          traceBoot = true;
+          hostCores = 1;
+          storeOnDisk = true;
+        };
+        startup-event-watch-vm = import ./tests/stop-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          captureConsole = true;
+          traceBoot = true;
+          hostCores = 1;
+          observeTaskEvents = true;
+        };
+        guest-boot-vm = import ./tests/guest-boot-vm.nix {
+          inherit pkgs kataRuntime;
+        };
+        guest-shared-boot-vm = import ./tests/guest-boot-vm.nix {
+          inherit pkgs kataRuntime;
+          sharedMemory = true;
+        };
+        guest-shmem-pages-vm = import ./tests/guest-boot-vm.nix {
+          inherit pkgs kataRuntime;
+          sharedMemory = true;
+          shmemHugePages = true;
+        };
         stop-without-stats-vm = stopWithoutStatsVmTest;
       };
 

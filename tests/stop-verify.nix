@@ -1,4 +1,7 @@
-{ pkgs }:
+{
+  pkgs,
+  observeTaskEvents ? false,
+}:
 
 pkgs.writeShellApplication {
   name = "kata-stop-verify";
@@ -58,11 +61,22 @@ pkgs.writeShellApplication {
       exit 1
     fi
 
+    ${pkgs.lib.optionalString observeTaskEvents ''
+      ctr -a "$CONTAINERD_SOCK" events > /tmp/startup-events.log 2>&1 &
+      events_pid=$!
+      trap 'kill "$events_pid" 2>/dev/null || true; wait "$events_pid" 2>/dev/null || true' EXIT
+    ''}
     nomad job run -detach "$STOP_JOB"
 
     alloc_id=""
     ready=false
     for _ in $(seq 1 90); do
+      ${pkgs.lib.optionalString observeTaskEvents ''
+        if ! grep '/tasks/start' /tmp/startup-events.log | grep -q -- '-sleeper'; then
+          sleep 1
+          continue
+        fi
+      ''}
       alloc_id=$(nomad job status -json kata-stop 2>/dev/null | jq -r '.[0].Allocations[0].ID // ""' || true)
       if [ -n "$alloc_id" ]; then
         state=$(nomad alloc status -json "$alloc_id" 2>/dev/null | jq -r '.TaskStates.sleeper.State // "pending"' || true)

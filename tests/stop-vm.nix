@@ -6,11 +6,14 @@
   traceShim ? false,
   captureConsole ? false,
   hostCores ? 4,
+  traceBoot ? false,
+  storeOnDisk ? false,
+  observeTaskEvents ? false,
 }:
 
 let
   jobs = import ./jobs.nix { inherit pkgs; };
-  verify = import ./stop-verify.nix { inherit pkgs; };
+  verify = import ./stop-verify.nix { inherit pkgs observeTaskEvents; };
   containerdSock = "/run/containerd/containerd.sock";
   nomadAddr = "http://127.0.0.1:14646";
   consoleConfig = pkgs.runCommand "kata-startup-console-configuration" { } ''
@@ -66,6 +69,7 @@ pkgs.testers.runNixOSTest {
 
       virtualisation = {
         cores = hostCores;
+        useNixStoreImage = storeOnDisk;
         memorySize = 4096;
         diskSize = 8192;
         qemu.options = [
@@ -166,6 +170,12 @@ pkgs.testers.runNixOSTest {
           "systemd-run --unit=guest-console --property=StandardOutput=file:/run/guest-console.log ${consoleCapture}"
       )
     ''}
+    ${pkgs.lib.optionalString traceBoot ''
+      machine.succeed(
+          "systemd-run --unit=boot-scheduling --property=StandardOutput=file:/run/boot-scheduling.log "
+          "${pkgs.sysstat}/bin/pidstat -h -t -u -r -w -p ALL 1 30"
+      )
+    ''}
     machine.succeed(
         "systemd-run --unit=stop-verification sh -c '"
         "${pkgs.coreutils}/bin/env NOMAD_ADDR=${nomadAddr} CONTAINERD_SOCK=${containerdSock} "
@@ -179,11 +189,13 @@ pkgs.testers.runNixOSTest {
         )
     finally:
         print(machine.succeed("cat /run/stop-verification.log"))
-        ${pkgs.lib.optionalString captureConsole ''
-          console = machine.succeed("base64 -w0 /run/guest-console.log").strip()
-          for offset in range(0, len(console), 1024):
-              print(f"GUEST_CONSOLE_CHUNK={offset}:{console[offset:offset + 1024]}")
-        ''}
+        if ${if traceBoot then "True" else "False"}:
+            print(machine.succeed("cat /run/boot-scheduling.log"))
+            print(machine.succeed("findmnt -t 9p,overlay,ext4,erofs"))
+        if ${if captureConsole then "True" else "False"}:
+            console = machine.succeed("base64 -w0 /run/guest-console.log").strip()
+            for offset in range(0, len(console), 1024):
+                print(f"GUEST_CONSOLE_CHUNK={offset}:{console[offset:offset + 1024]}")
     machine.succeed("test ! -f /run/stop-status")
     ${pkgs.lib.optionalString traceShim ''
       shim_pid = int(machine.succeed(
