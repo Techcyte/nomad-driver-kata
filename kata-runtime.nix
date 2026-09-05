@@ -1,7 +1,6 @@
 {
   fetchurl,
   lib,
-  makeWrapper,
   stdenvNoCC,
   zstd,
 }:
@@ -19,7 +18,6 @@ stdenvNoCC.mkDerivation {
   };
 
   nativeBuildInputs = [
-    makeWrapper
     zstd
   ];
 
@@ -47,10 +45,11 @@ stdenvNoCC.mkDerivation {
 
     ln -s ../libexec/kata-containers/containerd-shim-kata-v2 \
       "$out/bin/containerd-shim-kata-v2"
-    makeWrapper \
-      "$out/libexec/kata-containers/qemu-system-x86_64" \
-      "$out/bin/qemu-system-x86_64" \
-      --add-flags "-L $out/share/kata-qemu/qemu"
+    substitute ${./qemu-launch.sh} "$out/bin/qemu-system-x86_64" \
+      --replace-fail '#!/bin/bash' '#!${stdenvNoCC.shell}' \
+      --replace-fail '@qemu@' "$out/libexec/kata-containers/qemu-system-x86_64" \
+      --replace-fail '@data@' "$out/share/kata-qemu/qemu"
+    chmod +x "$out/bin/qemu-system-x86_64"
     ln -s containerd-shim-kata-v2 "$out/bin/containerd-shim-kata-qemu-v2"
     ln -s containerd-shim-kata-v2 "$out/bin/containerd-shim-kata-clh-v2"
 
