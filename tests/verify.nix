@@ -605,7 +605,7 @@ pkgs.writeShellScript "kata-verify" ''
   echo "[OK] poisoned allocation was replaced without same-ID sandbox recreation"
 
   echo ""
-  echo "=== TaskStats cgroup-v2 verification ==="
+  echo "=== TaskStats verification ==="
   ALLOC_STATS=""
   for i in $(seq 1 30); do
     ALLOC_STATS=$(curl --fail --silent "$NOMAD_ADDR/v1/client/allocation/$HEALTHY_ALLOC/stats" 2>/dev/null || echo "")
@@ -616,7 +616,7 @@ pkgs.writeShellScript "kata-verify" ''
   done
   echo "$ALLOC_STATS" | jq '.Tasks | with_entries(.value = .value.ResourceUsage)' 2>/dev/null || true
   if echo "$ALLOC_STATS" | jq -e '.Tasks.fetcher.ResourceUsage.MemoryStats.Usage > 0 and .Tasks["fetcher-sidecar"].ResourceUsage.MemoryStats.Usage > 0' >/dev/null 2>&1; then
-    echo "[OK] Nomad received cgroup-v2 task resource statistics"
+    echo "[OK] Nomad received task resource statistics"
   else
     echo "[FAIL] client allocation stats did not contain task resource usage"
     log_tail 100

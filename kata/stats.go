@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	v1 "github.com/containerd/cgroups/v3/cgroup1/stats"
 	v2 "github.com/containerd/cgroups/v3/cgroup2/stats"
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/typeurl/v2"
@@ -43,6 +44,31 @@ func parseMetricProto(metric *types.Metric) (*containerMetrics, error) {
 	m := &containerMetrics{Timestamp: time.Now().UTC()}
 
 	switch stats := data.(type) {
+	case *v1.Metrics:
+		if stats.CPU != nil {
+			if stats.CPU.Usage != nil {
+				m.CPUUsageNanos = stats.CPU.Usage.Total
+				m.CPUUserNanos = stats.CPU.Usage.User
+				m.CPUSystemNanos = stats.CPU.Usage.Kernel
+			}
+			if stats.CPU.Throttling != nil {
+				m.ThrottledPeriods = stats.CPU.Throttling.ThrottledPeriods
+				m.ThrottledTimeNanos = stats.CPU.Throttling.ThrottledTime
+			}
+		}
+		if stats.Memory != nil {
+			if stats.Memory.Usage != nil {
+				m.MemoryUsageBytes = stats.Memory.Usage.Usage
+				m.MemoryMaxUsageBytes = stats.Memory.Usage.Max
+				// Cgroup v1 memsw includes memory; Nomad reports swap alone.
+				if stats.Memory.Swap != nil && stats.Memory.Swap.Usage > m.MemoryUsageBytes {
+					m.MemorySwapBytes = stats.Memory.Swap.Usage - m.MemoryUsageBytes
+				}
+			}
+			m.MemoryRSSBytes = stats.Memory.RSS
+			m.MemoryCacheBytes = stats.Memory.Cache
+			m.MemoryMappedBytes = stats.Memory.MappedFile
+		}
 	case *v2.Metrics:
 		if stats.CPU != nil {
 			m.CPUUsageNanos = stats.CPU.UsageUsec * 1000
