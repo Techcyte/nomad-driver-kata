@@ -579,9 +579,11 @@ pkgs.writeShellScript "kata-verify" ''
   for i in $(seq 1 90); do
     REPLACEMENT_ALLOC=$(nomad job status -json kata-multi-vm 2>/dev/null \
       | jq -r --arg failed "$FAILED_ALLOC" '[.[0].Allocations[] | select(.TaskGroup == "server" and .ID != $failed and .ClientStatus == "running")][0].ID // ""')
-    if [ -n "$REPLACEMENT_ALLOC" ]; then
+    if [ -n "$REPLACEMENT_ALLOC" ] && nomad alloc status -json "$REPLACEMENT_ALLOC" \
+      | jq -e '.TaskStates.web.State == "running" and .TaskStates["web-sidecar"].State == "running"' >/dev/null; then
       break
     fi
+    REPLACEMENT_ALLOC=""
     sleep 2
   done
 
