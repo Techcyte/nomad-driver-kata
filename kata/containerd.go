@@ -587,6 +587,7 @@ func (c *containerdClient) ExecStreaming(ctx context.Context, id, execID string,
 
 	status := <-exitCh
 	code, _, _ := status.Result()
+	process.IO().Wait()
 	process.Delete(ctx)
 	return int(code), nil
 }

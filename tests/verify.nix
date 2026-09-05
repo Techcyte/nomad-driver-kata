@@ -175,6 +175,20 @@ pkgs.writeShellScript "kata-verify" ''
     exit 1
   fi
 
+  echo ""
+  echo "=== Exec output drain verification ==="
+  seq 1 65536 > /tmp/kata-exec-expected
+  DRAIN_STATUS=0
+  nomad alloc exec -i=false -t=false -task hello "$ALLOC_ID" /bin/sh -c 'seq 1 65536; seq 1 65536 >&2; exit 42' >/tmp/kata-exec-stdout 2>/tmp/kata-exec-stderr || DRAIN_STATUS=$?
+  if [ "$DRAIN_STATUS" -ne 42 ] \
+    || ! cmp /tmp/kata-exec-expected /tmp/kata-exec-stdout \
+    || ! cmp /tmp/kata-exec-expected /tmp/kata-exec-stderr; then
+    echo "[FAIL] exec output drain: status=$DRAIN_STATUS"
+    wc -l /tmp/kata-exec-expected /tmp/kata-exec-stdout /tmp/kata-exec-stderr
+    exit 1
+  fi
+  echo "[OK] exec drained 65536 lines on each stream with exit 42"
+
   if [ -n "$RESTART_NOMAD" ]; then
     echo ""
     echo "=== Driver restart recovery verification ==="
@@ -215,13 +229,17 @@ pkgs.writeShellScript "kata-verify" ''
   # Verify VM sharing via hostname — both tasks should see the sandbox hostname
   echo ""
   echo "=== VM sharing verification ==="
-  SIDECAR_HOSTNAME=$(nomad alloc exec -i=false -t=false -task sidecar "$ALLOC_ID" /bin/hostname 2>/dev/null || echo "")
+  SIDECAR_EXEC_STATUS=0
+  SIDECAR_HOSTNAME=$(nomad alloc exec -i=false -t=false -task sidecar "$ALLOC_ID" /bin/hostname) || SIDECAR_EXEC_STATUS=$?
+  echo "sidecar hostname exec status: $SIDECAR_EXEC_STATUS"
   echo "hello hostname:   $EXEC_HOSTNAME"
   echo "sidecar hostname: $SIDECAR_HOSTNAME"
-  if [ "$EXEC_HOSTNAME" = "$SIDECAR_HOSTNAME" ]; then
+  if [ "$SIDECAR_EXEC_STATUS" -eq 0 ] && [ "$EXEC_HOSTNAME" = "$SIDECAR_HOSTNAME" ]; then
     echo "[OK] both tasks share sandbox hostname — same Kata VM"
   else
-    echo "[FAIL] hostnames differ — tasks may be in separate VMs"
+    echo "[FAIL] hostname exec status/output mismatch"
+    nomad alloc status "$ALLOC_ID" || true
+    ctr -a "$CONTAINERD_SOCK" tasks list || true
     exit 1
   fi
 
