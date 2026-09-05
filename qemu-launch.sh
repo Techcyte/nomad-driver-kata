@@ -10,22 +10,22 @@
 args=()
 object=false
 for arg in "$@"; do
-    if "$object"; then
-        case ",$arg," in
-            ,memory-backend-file,*)
-                if [[ ",$arg," == *,id=entire-guest-memory-share,* &&
-                      ",$arg," == *,mem-path=/dev/shm,* &&
-                      ",$arg," == *,share=on,* &&
-                      ",$arg," != *,align=* ]]; then
-                    arg+=",align=2097152"
-                fi
-                ;;
-        esac
-    fi
-    object=false
-    if [[ "$arg" == -object || "$arg" == --object ]]; then
-        object=true
-    fi
-    args+=("$arg")
+	if "$object"; then
+		case ",$arg," in
+		,memory-backend-file,*)
+			if [[ ",$arg," == *,id=entire-guest-memory-share,* &&
+				",$arg," == *,mem-path=/dev/shm,* &&
+				",$arg," == *,share=on,* &&
+				",$arg," != *,align=* ]]; then
+				arg+=",align=2097152"
+			fi
+			;;
+		esac
+	fi
+	object=false
+	if [[ "$arg" == -object || "$arg" == --object ]]; then
+		object=true
+	fi
+	args+=("$arg")
 done
 exec @qemu@ -L @data@ "${args[@]}"

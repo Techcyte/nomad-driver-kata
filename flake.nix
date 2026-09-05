@@ -87,6 +87,12 @@
           captureConsole = true;
           hostCores = 1;
         };
+        startup-shmem-pages-vm = import ./tests/stop-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          captureConsole = true;
+          hostCores = 1;
+          shmemHugePages = true;
+        };
         startup-trace-vm = import ./tests/stop-vm.nix {
           inherit pkgs driverPkg kataRuntime;
           captureConsole = true;

@@ -9,6 +9,7 @@
   traceBoot ? false,
   storeOnDisk ? false,
   observeTaskEvents ? false,
+  shmemHugePages ? false,
 }:
 
 let
@@ -165,6 +166,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("ctr -a ${containerdSock} image import ${pauseImage}")
     machine.wait_for_unit("nomad.service")
     machine.wait_until_succeeds("nomad node status -address=${nomadAddr}")
+    if ${if shmemHugePages then "True" else "False"}:
+        machine.succeed("mount -o remount,huge=within_size /dev/shm")
+        print(machine.succeed("findmnt /dev/shm; cat /sys/kernel/mm/transparent_hugepage/shmem_enabled"))
     ${pkgs.lib.optionalString captureConsole ''
       machine.succeed(
           "systemd-run --unit=guest-console --property=StandardOutput=file:/run/guest-console.log ${consoleCapture}"
