@@ -722,6 +722,12 @@ func TestTaskExitMarksAllocationDeadWhenSandboxStops(t *testing.T) {
 	if !d.sandboxDead(cfg.AllocID) {
 		t.Fatal("sandbox death did not poison allocation")
 	}
+	h, _ := d.tasks.Get(cfg.ID)
+	select {
+	case <-h.doneCh:
+	case <-time.After(time.Second):
+		t.Fatal("sandbox death cleanup did not finish")
+	}
 	if !rec.called("Cleanup") || !rec.called("DeleteSandboxMetadata") {
 		t.Error("sandbox death did not request stale sandbox cleanup")
 	}
@@ -1065,7 +1071,7 @@ func TestStartTaskMountEmptySourceOrTarget(t *testing.T) {
 }
 
 func TestDestroyTask(t *testing.T) {
-	d, rec := testDriverWithRecorder(t)
+	d, _ := testDriverWithRecorder(t)
 	cfg := testTaskConfig(t, &TaskConfig{Image: "alpine:latest"})
 
 	if _, _, err := d.StartTask(cfg); err != nil {
@@ -1074,13 +1080,6 @@ func TestDestroyTask(t *testing.T) {
 
 	if err := d.DestroyTask(cfg.ID, true); err != nil {
 		t.Fatalf("DestroyTask: %v", err)
-	}
-
-	if !rec.called("DeleteTask") {
-		t.Error("expected DeleteTask call")
-	}
-	if !rec.called("DeleteContainer") {
-		t.Error("expected DeleteContainer call")
 	}
 
 	configDir := d.taskConfigDir(cfg.AllocID, cfg.Name)

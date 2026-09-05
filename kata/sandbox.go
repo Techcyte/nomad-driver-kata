@@ -26,6 +26,7 @@ type SandboxManager struct {
 	ctr          Containerd
 	logger       hclog.Logger
 	cleanupDelay time.Duration
+	stateDir     string
 }
 
 func NewSandboxManager(ctr Containerd, logger hclog.Logger, cleanupDelay time.Duration) *SandboxManager {
@@ -46,6 +47,9 @@ func sandboxID(allocID string) string {
 func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, runtime, netNS, hostname string) (*Sandbox, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	if sm.cleanupPending(allocID) {
+		return nil, fmt.Errorf("sandbox cleanup pending for allocation %s; replacement required", allocID)
+	}
 
 	if sb, ok := sm.sandboxes[allocID]; ok {
 		if sb.cleaning {
@@ -145,11 +149,18 @@ func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) {
 	}
 	sb.cleaning = true
 	sm.mu.Unlock()
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
 	sm.logger.Info("destroying sandbox VM", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID)
-	err := sm.ctr.Cleanup(ctx, sb.ID)
+	err := sm.recordCleanup(sandbox.AllocID)
+	if err == nil {
+		err = sm.ctr.Cleanup(ctx, sb.ID)
+	}
 	if err == nil {
 		err = sm.ctr.DeleteSandboxMetadata(ctx, sb.ID)
+	}
+	if err == nil {
+		err = sm.clearCleanup(sandbox.AllocID)
 	}
 	sm.mu.Lock()
 	if err != nil {
@@ -164,6 +175,9 @@ func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) {
 func (sm *SandboxManager) Recover(allocID, sbID string) *Sandbox {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	if sm.cleanupPending(allocID) {
+		return nil
+	}
 
 	if sb, ok := sm.sandboxes[allocID]; ok {
 		if sb.cleaning {

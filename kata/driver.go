@@ -3,6 +3,7 @@ package kata
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -170,6 +171,7 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	}
 	d.ctr = ctr
 	d.sandboxMgr = NewSandboxManager(d.ctr, d.logger, cleanupDelay)
+	d.sandboxMgr.stateDir = d.stateDir
 	d.eventer = eventer.NewEventer(d.ctx, d.logger)
 
 	if config.GCImage {
@@ -282,10 +284,16 @@ func (d *Driver) markSandboxDead(allocID string) error {
 
 	d.logger.Error("shared Kata sandbox died; allocation replacement required", "alloc_id", allocID)
 	sandboxID := sandboxID(allocID)
-	d.ctr.Cleanup(context.Background(), sandboxID)
-	d.ctr.DeleteSandboxMetadata(context.Background(), sandboxID)
-	if err := cleanupSandboxProcesses("/proc", sandboxID); err != nil {
-		d.logger.Error("failed to clean orphaned Kata sandbox processes", "alloc_id", allocID, "sandbox_id", sandboxID, "error", err)
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	cleanupErr := d.ctr.Cleanup(ctx, sandboxID)
+	if cleanupErr == nil {
+		cleanupErr = d.ctr.DeleteSandboxMetadata(ctx, sandboxID)
+	}
+	processErr := cleanupSandboxProcesses("/proc", sandboxID)
+	if err := errors.Join(cleanupErr, processErr); err != nil {
+		d.logger.Error("failed to clean dead sandbox", "alloc_id", allocID, "sandbox_id", sandboxID, "error", err)
+		return err
 	}
 	return nil
 }
@@ -316,7 +324,9 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	containerID := fmt.Sprintf("kata-%s-%s", cfg.AllocID, cfg.Name)
 
 	// Clean up any leftover state from a previous attempt
-	d.ctr.Cleanup(ctx, containerID)
+	if err := cleanupContainer(ctx, d.ctr, containerID); err != nil {
+		return nil, nil, fmt.Errorf("cleaning previous task: %w", err)
+	}
 
 	var netNS string
 	if cfg.NetworkIsolation != nil && cfg.NetworkIsolation.Path != "" {
@@ -471,8 +481,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 	go h.run(cfg.StdoutPath, cfg.StderrPath)
 	if err := <-h.startupCh; err != nil {
-		d.ctr.Cleanup(ctx, containerID)
-		return nil, nil, fmt.Errorf("starting task: %w", err)
+		cleanupErr := cleanupContainer(ctx, d.ctr, containerID)
+		if cleanupErr != nil {
+			cleanupErr = errors.Join(cleanupErr, d.sandboxMgr.fence(sandbox))
+		}
+		return nil, nil, errors.Join(fmt.Errorf("starting task: %w", err), cleanupErr)
 	}
 
 	state := &TaskState{
@@ -486,8 +499,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	handle := drivers.NewTaskHandle(taskHandleVersion)
 	handle.Config = cfg
 	if err := handle.SetDriverState(state); err != nil {
-		d.ctr.Cleanup(ctx, containerID)
-		return nil, nil, fmt.Errorf("setting driver state: %w", err)
+		cleanupErr := cleanupContainer(ctx, d.ctr, containerID)
+		if cleanupErr != nil {
+			cleanupErr = errors.Join(cleanupErr, d.sandboxMgr.fence(sandbox))
+		}
+		return nil, nil, errors.Join(fmt.Errorf("setting driver state: %w", err), cleanupErr)
 	}
 
 	d.tasks.Set(cfg.ID, h)
@@ -571,19 +587,36 @@ func (d *Driver) StopTask(taskID string, timeout time.Duration, signal string) e
 		signal = "SIGTERM"
 	}
 
-	if err := d.ctr.KillTask(context.Background(), h.containerID, signal); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	err := d.ctr.KillTask(ctx, h.containerID, signal)
+	cancel()
+	if err != nil {
 		d.logger.Warn("signal failed, force killing", "error", err)
-		_ = d.ctr.KillTask(context.Background(), h.containerID, "SIGKILL")
+		return d.forceStop(h)
 	}
 
 	select {
 	case <-h.doneCh:
 	case <-time.After(timeout):
 		d.logger.Warn("timeout waiting for task, force killing", "timeout", timeout)
-		_ = d.ctr.KillTask(context.Background(), h.containerID, "SIGKILL")
+		return d.forceStop(h)
 	}
 
 	return nil
+}
+
+func (d *Driver) forceStop(h *taskHandle) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	if err := d.ctr.KillTask(ctx, h.containerID, "SIGKILL"); err != nil {
+		return fmt.Errorf("force killing task %s: %w", h.containerID, err)
+	}
+	select {
+	case <-h.doneCh:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for task %s to stop: %w", h.containerID, ctx.Err())
+	}
 }
 
 func (d *Driver) DestroyTask(taskID string, force bool) error {
@@ -594,23 +627,19 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 
 	d.logger.Info("destroying task", "task_id", taskID, "container_id", h.containerID)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
 
-	if h.IsRunning() {
-		if !force {
-			return fmt.Errorf("task %s still running", taskID)
-		}
-		_ = d.ctr.KillTask(ctx, h.containerID, "SIGKILL")
-		select {
-		case <-h.doneCh:
-		case <-time.After(5 * time.Second):
-		}
+	if h.IsRunning() && !force {
+		return fmt.Errorf("task %s still running", taskID)
 	}
-
-	_ = d.ctr.DeleteTask(ctx, h.containerID)
-	_ = d.ctr.DeleteContainer(ctx, h.containerID)
+	if err := cleanupContainer(ctx, d.ctr, h.containerID); err != nil {
+		return fmt.Errorf("cleaning task %s: %w", taskID, err)
+	}
+	if err := os.RemoveAll(d.taskConfigDir(h.allocID, h.taskName)); err != nil {
+		return fmt.Errorf("removing task configuration: %w", err)
+	}
 	d.sandboxMgr.Release(ctx, h.sandbox)
-	os.RemoveAll(d.taskConfigDir(h.allocID, h.taskName))
 	d.tasks.Delete(taskID)
 
 	return nil
