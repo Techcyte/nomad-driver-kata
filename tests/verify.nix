@@ -189,6 +189,10 @@ pkgs.writeShellScript "kata-verify" ''
   fi
   echo "[OK] exec drained 65536 lines on each stream with exit 42"
 
+  if [ -n "''${EXEC_TESTS:-}" ]; then
+    KATA_EXEC_CONTAINER="kata-$ALLOC_ID-hello" "$EXEC_TESTS" -test.run '^TestExecOutputDrain$' -test.v
+  fi
+
   if [ -n "$RESTART_NOMAD" ]; then
     echo ""
     echo "=== Driver restart recovery verification ==="

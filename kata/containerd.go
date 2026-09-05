@@ -525,7 +525,7 @@ func (c *containerdClient) Exec(ctx context.Context, id, execID string, cmd []st
 	pspec.Args = cmd
 	pspec.Terminal = false
 
-	var stdout bytes.Buffer
+	var stdout execOutput
 	process, err := task.Exec(ctx, execID, &pspec, cio.NewCreator(cio.WithStreams(nil, &stdout, &stdout)))
 	if err != nil {
 		return "", -1, fmt.Errorf("exec in %s: %w", id, err)

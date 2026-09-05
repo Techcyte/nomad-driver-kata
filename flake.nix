@@ -34,12 +34,31 @@
         };
       };
 
+      execTests = driverPkg.overrideAttrs {
+        pname = "kata-exec-tests";
+        subPackages = [ "kata" ];
+        buildPhase = ''
+          runHook preBuild
+          go test -c -o kata-exec-tests ./kata
+          runHook postBuild
+        '';
+        installPhase = ''
+          mkdir -p "$out/bin"
+          cp kata-exec-tests "$out/bin/"
+        '';
+      };
+
       integrationTest = import ./tests/integration.nix {
         inherit pkgs driverPkg kataRuntime;
       };
 
       integrationVmTest = import ./tests/integration-vm.nix {
-        inherit pkgs driverPkg kataRuntime;
+        inherit
+          pkgs
+          driverPkg
+          kataRuntime
+          execTests
+          ;
       };
 
       stopVmTest = import ./tests/stop-vm.nix {

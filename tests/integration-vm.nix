@@ -16,6 +16,7 @@
   pkgs,
   driverPkg,
   kataRuntime,
+  execTests ? null,
   publishAllocationMetrics ? true,
   restartNomad ? true,
   restartTask ? true,
@@ -205,6 +206,7 @@ pkgs.testers.runNixOSTest {
             "EXIT_IO_JOB=${jobs.exitIo} "
             "STOP_JOB=${jobs.stop} "
             "LIFECYCLE_JOB=${jobs.lifecycle} "
+            "EXEC_TESTS=${if execTests == null then "" else "${execTests}/bin/kata-exec-tests"} "
             "RESTART_NOMAD='${pkgs.lib.optionalString restartNomad "systemctl restart nomad.service && systemctl is-active --quiet nomad.service"}' "
             "${verify}",
             timeout=600,
