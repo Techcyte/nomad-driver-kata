@@ -7,7 +7,7 @@ import (
 
 // execOutput combines the independently copied stdout and stderr streams.
 type execOutput struct {
-	mu sync.Mutex
+	mu     sync.Mutex
 	buffer bytes.Buffer
 }
 

@@ -190,7 +190,7 @@ pkgs.writeShellScript "kata-verify" ''
   echo "[OK] exec drained 65536 lines on each stream with exit 42"
 
   if [ -n "''${EXEC_TESTS:-}" ]; then
-    KATA_EXEC_CONTAINER="kata-$ALLOC_ID-hello" "$EXEC_TESTS" -test.run '^TestExecOutputDrain$' -test.v
+    KATA_EXEC_CONTAINER="kata-$ALLOC_ID-hello" "$EXEC_TESTS" -test.run '^TestExecOutputDrain$' -test.count=20 -test.v
   fi
 
   if [ -n "$RESTART_NOMAD" ]; then
@@ -404,6 +404,24 @@ pkgs.writeShellScript "kata-verify" ''
 
   echo ""
   echo "=== Repeated lifecycle cleanup verification ==="
+  allocation_resources() {
+    local alloc_id="$1"
+    local tasks containers snapshots mounts
+    tasks=$(ctr -a "$CONTAINERD_SOCK" tasks list) || return 1
+    containers=$(ctr -a "$CONTAINERD_SOCK" containers list) || return 1
+    snapshots=$(ctr -a "$CONTAINERD_SOCK" snapshots list) || return 1
+    mounts=$(findmnt -rn) || return 1
+    printf '%s\n' "$tasks" "$containers" "$snapshots" "$mounts" | grep -F "$alloc_id" || true
+    pgrep -af "$alloc_id" || true
+    for directory in /run/kata /run/kata-containers; do
+      if [ -d "$directory" ]; then
+        find "$directory" -xdev -path "*$alloc_id*" -mindepth 1 -print || return 1
+      fi
+    done
+    if [ -d "/tmp/kata-driver/$alloc_id" ]; then
+      find "/tmp/kata-driver/$alloc_id" -mindepth 1 -print || return 1
+    fi
+  }
   for iteration in $(seq 1 10); do
     nomad job run -detach "$LIFECYCLE_JOB"
     LIFE_ALLOC=""
@@ -423,16 +441,19 @@ pkgs.writeShellScript "kata-verify" ''
     fi
     nomad job stop -purge -detach kata-lifecycle >/dev/null
     for i in $(seq 1 30); do
-      if ! pgrep -f "$LIFE_ALLOC" >/dev/null; then break; fi
+      LIFE_RESOURCES=$(allocation_resources "$LIFE_ALLOC")
+      MEMORY_USED=$(df --output=used /run/kata-memory | tail -n1)
+      if [ -z "$LIFE_RESOURCES" ] && [ "$MEMORY_USED" -eq 0 ]; then break; fi
       sleep 1
     done
-    if pgrep -f "$LIFE_ALLOC" >/dev/null; then
-      echo "[FAIL] lifecycle iteration $iteration leaked sandbox resources"
-      pgrep -af "$LIFE_ALLOC" || true
+    if [ -n "$LIFE_RESOURCES" ] || [ "$MEMORY_USED" -ne 0 ]; then
+      echo "[FAIL] lifecycle iteration $iteration leaked resources: tmpfs_used=$MEMORY_USED"
+      printf '%s\n' "$LIFE_RESOURCES"
       exit 1
     fi
+    echo "[OK] lifecycle iteration $iteration: no tasks, containers, snapshots, mounts, directories, or tmpfs blocks"
   done
-  echo "[OK] 10 lifecycle iterations completed without allocation-local process leaks"
+  echo "[OK] 10 lifecycle iterations completed without allocation-local resource leaks"
 
   echo ""
   echo "========================================="

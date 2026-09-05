@@ -505,47 +505,12 @@ func (c *containerdClient) TaskState(ctx context.Context, id string) (bool, erro
 }
 
 func (c *containerdClient) Exec(ctx context.Context, id, execID string, cmd []string) (string, int, error) {
-	ctx = c.nsCtx(ctx)
-	container, err := c.client.LoadContainer(ctx, id)
+	var output execOutput
+	code, err := c.ExecStreaming(ctx, id, execID, cmd, false, nil, &output, &output)
 	if err != nil {
 		return "", -1, err
 	}
-
-	task, err := container.Task(ctx, nil)
-	if err != nil {
-		return "", -1, err
-	}
-
-	spec, err := container.Spec(ctx)
-	if err != nil {
-		return "", -1, err
-	}
-
-	pspec := *spec.Process
-	pspec.Args = cmd
-	pspec.Terminal = false
-
-	var stdout execOutput
-	process, err := task.Exec(ctx, execID, &pspec, cio.NewCreator(cio.WithStreams(nil, &stdout, &stdout)))
-	if err != nil {
-		return "", -1, fmt.Errorf("exec in %s: %w", id, err)
-	}
-
-	exitCh, err := process.Wait(ctx)
-	if err != nil {
-		process.Delete(ctx)
-		return "", -1, err
-	}
-
-	if err := process.Start(ctx); err != nil {
-		process.Delete(ctx)
-		return "", -1, err
-	}
-
-	status := <-exitCh
-	code, _, _ := status.Result()
-	process.Delete(ctx)
-	return stdout.String(), int(code), nil
+	return output.String(), code, nil
 }
 
 func (c *containerdClient) ExecStreaming(ctx context.Context, id, execID string, cmd []string, tty bool, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
