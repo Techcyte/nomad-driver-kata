@@ -4,10 +4,15 @@ import sys
 import tempfile
 
 qemu = sys.argv[1]
+managed_memory = "--unmanaged-only" not in sys.argv
 
 
 def alignment(
-    backend, expected, object_option="-object", object_id="entire-guest-memory-share"
+    backend,
+    expected,
+    object_option="-object",
+    object_id="entire-guest-memory-share",
+    expected_path=None,
 ):
     commands = [
         {"execute": "qmp_capabilities"},
@@ -15,6 +20,11 @@ def alignment(
             "execute": "qom-get",
             "arguments": {"path": f"/objects/{object_id}", "property": "align"},
             "id": "alignment",
+        },
+        {
+            "execute": "qom-get",
+            "arguments": {"path": f"/objects/{object_id}", "property": "mem-path"},
+            "id": "memory-path",
         },
         {"execute": "quit"},
     ]
@@ -46,16 +56,30 @@ def alignment(
         if response.get("id") == "alignment"
     )
     assert actual == expected, (backend, actual, expected)
+    actual_path = next(
+        response["return"]
+        for response in responses
+        if response.get("id") == "memory-path"
+    )
+    if expected_path is None:
+        expected_path = next(
+            part.removeprefix("mem-path=")
+            for part in backend.split(",")
+            if part.startswith("mem-path=")
+        )
+    assert actual_path == expected_path, (backend, actual_path, expected_path)
 
 
 backend = "memory-backend-file,id=entire-guest-memory-share,mem-path=/dev/shm,size=4M,share=on"
-alignment(backend, 2097152)
-alignment(backend + ",align=4194304", 4194304)
-alignment(
-    "memory-backend-file,share=on,size=4M,mem-path=/dev/shm,id=entire-guest-memory-share",
-    2097152,
-)
-alignment(backend, 2097152, "--object")
+if managed_memory:
+    alignment(backend, 2097152, expected_path="/run/kata-memory")
+    alignment(backend + ",align=4194304", 4194304, expected_path="/run/kata-memory")
+    alignment(
+        "memory-backend-file,share=on,size=4M,mem-path=/dev/shm,id=entire-guest-memory-share",
+        2097152,
+        expected_path="/run/kata-memory",
+    )
+    alignment(backend, 2097152, "--object", expected_path="/run/kata-memory")
 alignment(backend.replace("share=on", "share=off"), 0)
 alignment(backend.replace("entire-guest-memory-share", "rootfs"), 0, object_id="rootfs")
 alignment(

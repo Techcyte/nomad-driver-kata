@@ -159,6 +159,8 @@ pkgs.testers.runNixOSTest {
     };
 
   testScript = ''
+    import json
+
     start_all()
     machine.wait_for_unit("containerd.service")
     machine.wait_until_succeeds("ctr -a ${containerdSock} version")
@@ -166,6 +168,12 @@ pkgs.testers.runNixOSTest {
     machine.succeed("ctr -a ${containerdSock} image import ${pauseImage}")
     machine.wait_for_unit("nomad.service")
     machine.wait_until_succeeds("nomad node status -address=${nomadAddr}")
+    memory_mount = json.loads(machine.succeed("findmnt -J -M /run/kata-memory"))["filesystems"][0]
+    assert memory_mount["fstype"] == "tmpfs", memory_mount
+    assert "huge=within_size" in memory_mount["options"].split(","), memory_mount
+    assert machine.succeed("stat -c '%a:%U:%G' /run/kata-memory").strip() == "700:root:root"
+    assert "huge=within_size" not in machine.succeed("findmnt -n -o OPTIONS /dev/shm")
+    machine.succeed("${pkgs.python3}/bin/python3 ${./qemu-memory.py} ${kataRuntime}/bin/qemu-system-x86_64")
     if ${if shmemHugePages then "True" else "False"}:
         machine.succeed("mount -o remount,huge=within_size /dev/shm")
         print(machine.succeed("findmnt /dev/shm; cat /sys/kernel/mm/transparent_hugepage/shmem_enabled"))
@@ -220,5 +228,7 @@ pkgs.testers.runNixOSTest {
         "grep -E 'agent health check|stop monitor signal|runtime keep alive|shutdown shim|failed to delete task|delete hypervisor|resource clean up'"
     )[1])
     assert int(machine.succeed("cat /run/stop-status").strip()) == 0
+    assert machine.succeed("find /run/kata-memory -mindepth 1 -print").strip() == ""
+    assert int(machine.succeed("df --output=used /run/kata-memory | tail -n1").strip()) == 0
   '';
 }

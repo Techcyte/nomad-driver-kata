@@ -5,7 +5,8 @@
 # guard-page reservation can leave tmpfs RAM unaligned even when THP is enabled.
 # Discussion: https://github.com/kata-containers/kata-containers/issues/10997
 # Exact guard-page mechanism: https://lists.openwall.net/linux-kernel/2018/04/23/103
-# Alignment permits huge mappings; host tmpfs THP policy must allow them too.
+# /run/kata-memory is a dedicated host tmpfs with huge=within_size, mounted
+# declaratively before Nomad starts. Host /dev/shm policy is left untouched.
 # Only guest RAM is adjusted, never the read-only image/PMEM backend.
 args=()
 object=false
@@ -15,9 +16,14 @@ for arg in "$@"; do
 		,memory-backend-file,*)
 			if [[ ",$arg," == *,id=entire-guest-memory-share,* &&
 				",$arg," == *,mem-path=/dev/shm,* &&
-				",$arg," == *,share=on,* &&
-				",$arg," != *,align=* ]]; then
-				arg+=",align=2097152"
+				",$arg," == *,share=on,* ]]; then
+				arg=",$arg,"
+				arg=${arg/,mem-path=\/dev\/shm,/,mem-path=\/run\/kata-memory,}
+				arg=${arg#,}
+				arg=${arg%,}
+				if [[ ",$arg," != *,align=* ]]; then
+					arg+=",align=2097152"
+				fi
 			fi
 			;;
 		esac

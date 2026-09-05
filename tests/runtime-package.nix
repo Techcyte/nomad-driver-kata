@@ -40,7 +40,8 @@ pkgs.runCommand "kata-runtime-package" { nativeBuildInputs = [ pkgs.python3 ]; }
   test "$(sha256sum ${kataRuntime}/share/kata-containers/kata-containers.img | cut -d' ' -f1)" = \
     "96497f64da1de9c7473fef46c3d29ddd0805d334731cf9d903a21a5b2c33cefb"
 
-  python3 ${./qemu-memory.py} ${kataRuntime}/bin/qemu-system-x86_64
+  # Managed RAM needs the host mount; its QMP checks run in the NixOS VM.
+  python3 ${./qemu-memory.py} ${kataRuntime}/bin/qemu-system-x86_64 --unmanaged-only
 
   touch "$out"
 ''

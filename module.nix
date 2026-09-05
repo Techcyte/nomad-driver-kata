@@ -2,7 +2,8 @@
 let
   cfg = config.services.nomad-driver-kata;
   driverPkg = cfg.package;
-in {
+in
+{
   options.services.nomad-driver-kata = {
     enable = lib.mkEnableOption "Kata Containers task driver for Nomad";
 
@@ -37,6 +38,20 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    # Shared guest RAM needs THP-capable tmpfs plus QEMU backend alignment.
+    # Keep this policy separate from applications using the host's /dev/shm.
+    # https://github.com/kata-containers/kata-containers/issues/10997
+    systemd.mounts = [
+      {
+        what = "tmpfs";
+        where = "/run/kata-memory";
+        type = "tmpfs";
+        options = "mode=0700,uid=0,gid=0,nosuid,nodev,noexec,huge=within_size";
+        wantedBy = [ "local-fs.target" ];
+      }
+    ];
+    systemd.services.nomad.unitConfig.RequiresMountsFor = [ "/run/kata-memory" ];
+
     systemd.tmpfiles.rules = [
       "d /opt/nomad/plugins 0755 root root - -"
       "L+ /opt/nomad/plugins/nomad-driver-kata - - - - ${driverPkg}/bin/nomad-driver-kata"
