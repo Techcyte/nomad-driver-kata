@@ -78,6 +78,10 @@
           restartTask = false;
         };
         stop-vm = stopVmTest;
+        startup-console-vm = import ./tests/stop-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          captureConsole = true;
+        };
         stop-without-stats-vm = stopWithoutStatsVmTest;
       };
 

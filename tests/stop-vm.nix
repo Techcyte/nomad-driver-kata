@@ -12,6 +12,11 @@ let
   verify = import ./stop-verify.nix { inherit pkgs; };
   containerdSock = "/run/containerd/containerd.sock";
   nomadAddr = "http://127.0.0.1:14646";
+  consoleConfig = pkgs.runCommand "kata-startup-console-configuration" { } ''
+    substitute ${kataRuntime}/share/defaults/kata-containers/runtime-rs/configuration.toml "$out" \
+      --replace-fail 'kernel_params = "cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1"' \
+        'kernel_params = "cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1 loglevel=7 systemd.log_target=console systemd.show_status=true"'
+  '';
   consoleCapture = pkgs.writeShellScript "capture-guest-console" ''
     for _ in $(${pkgs.coreutils}/bin/seq 1 1200); do
       for socket in /run/kata/*/root/console.sock; do
@@ -78,7 +83,10 @@ pkgs.testers.runNixOSTest {
       };
 
       environment.etc."kata-containers/runtime-rs/configuration.toml".source =
-        "${kataRuntime}/share/defaults/kata-containers/runtime-rs/configuration.toml";
+        if captureConsole then
+          consoleConfig
+        else
+          "${kataRuntime}/share/defaults/kata-containers/runtime-rs/configuration.toml";
       systemd.services.containerd.path = [ kataRuntime ];
 
       services.nomad = {
@@ -169,7 +177,7 @@ pkgs.testers.runNixOSTest {
     )
     print(machine.succeed("cat /run/stop-verification.log"))
     ${pkgs.lib.optionalString captureConsole ''
-      print(machine.succeed("cat /run/guest-console.log"))
+      print("GUEST_CONSOLE_BASE64=" + machine.succeed("base64 -w0 /run/guest-console.log"))
     ''}
     machine.succeed("test ! -f /run/stop-status")
     ${pkgs.lib.optionalString traceShim ''
