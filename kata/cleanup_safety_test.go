@@ -3,6 +3,8 @@ package kata
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hashicorp/go-hclog"
@@ -25,6 +27,29 @@ func TestStopTaskReportsFailedForceKill(t *testing.T) {
 	d.ctr = &failedSignal{Containerd: rec}
 	if err := d.StopTask(cfg.ID, 0, "SIGTERM"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("StopTask = %v, want signal failure", err)
+	}
+}
+
+type failedSandboxStart struct {
+	Containerd
+}
+
+func (c *failedSandboxStart) StartTaskDetached(ctx context.Context, id string) error {
+	return errors.New("sandbox start rejected")
+}
+
+func TestFailedSandboxStartRetainsFailedCleanup(t *testing.T) {
+	rec := newRecorder()
+	mgr := NewSandboxManager(&failedSandboxStart{Containerd: &failedCleanup{Containerd: rec}}, hclog.NewNullLogger(), 0)
+	mgr.stateDir = t.TempDir()
+	if _, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", ""); err == nil {
+		t.Fatal("sandbox startup succeeded")
+	}
+	if !mgr.cleanupPending("alloc-1") {
+		t.Fatal("failed sandbox-start cleanup did not persist fence")
+	}
+	if rec.called("DeleteSandboxMetadata") {
+		t.Fatal("failed sandbox-start cleanup deleted metadata")
 	}
 }
 
@@ -67,6 +92,57 @@ func TestMarkSandboxDeadPreservesMetadataOnCleanupFailure(t *testing.T) {
 	}
 	if rec.called("DeleteSandboxMetadata") {
 		t.Fatal("failed runtime cleanup deleted sandbox metadata")
+	}
+}
+
+func TestSandboxCleanupClearsFenceAfterSuccess(t *testing.T) {
+	mgr := NewSandboxManager(newRecorder(), hclog.NewNullLogger(), 0)
+	mgr.stateDir = t.TempDir()
+	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Release(context.Background(), sb); err != nil {
+		t.Fatal(err)
+	}
+	if mgr.cleanupPending("alloc-1") {
+		t.Fatal("successful cleanup retained fence")
+	}
+}
+
+func TestSandboxCleanupDoesNotProceedWithoutFence(t *testing.T) {
+	rec := newRecorder()
+	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
+	mgr.stateDir = t.TempDir()
+	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mgr.stateDir, "alloc-1"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Release(context.Background(), sb); err == nil {
+		t.Fatal("cleanup hid fence persistence failure")
+	}
+	if rec.called("Cleanup") {
+		t.Fatal("runtime teardown started without persistent fence")
+	}
+}
+
+func TestSandboxReleaseReportsCleanupFailure(t *testing.T) {
+	mgr := NewSandboxManager(&failedCleanup{Containerd: newRecorder()}, hclog.NewNullLogger(), 0)
+	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Release(context.Background(), sb); err == nil {
+		t.Fatal("Release hid cleanup failure")
+	}
+	if err := mgr.Release(context.Background(), sb); err == nil {
+		t.Fatal("repeated Release hid incomplete cleanup")
+	}
+	if sb.refCount.Load() != 0 {
+		t.Fatal("repeated release corrupted reference count")
 	}
 }
 

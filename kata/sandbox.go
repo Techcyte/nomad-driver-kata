@@ -2,6 +2,7 @@ package kata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -84,20 +85,17 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 		return nil, fmt.Errorf("creating sandbox container: %w", err)
 	}
 
+	sb := &Sandbox{ID: id, AllocID: allocID}
+	sm.sandboxes[allocID] = sb
 	if err := sm.ctr.CreateSandboxMetadata(ctx, id, runtime); err != nil {
-		sm.ctr.DeleteContainer(ctx, id)
-		return nil, fmt.Errorf("creating sandbox metadata: %w", err)
+		return nil, errors.Join(fmt.Errorf("creating sandbox metadata: %w", err), sm.cleanupLocked(sb, sb))
 	}
 
 	if err := sm.ctr.StartTaskDetached(ctx, id); err != nil {
-		sm.ctr.DeleteSandboxMetadata(ctx, id)
-		sm.ctr.DeleteContainer(ctx, id)
-		return nil, fmt.Errorf("starting sandbox: %w", err)
+		return nil, errors.Join(fmt.Errorf("starting sandbox: %w", err), sm.cleanupLocked(sb, sb))
 	}
 
-	sb := &Sandbox{ID: id, AllocID: allocID}
 	sb.refCount.Store(1)
-	sm.sandboxes[allocID] = sb
 
 	sm.logger.Info("sandbox VM running", "alloc_id", allocID, "sandbox_id", id)
 	return sb, nil
@@ -106,30 +104,33 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 // Release decrements the sandbox reference count and schedules VM teardown
 // when no more tasks are using it. The delay lets Nomad start poststop tasks
 // inside the allocation's existing VM.
-func (sm *SandboxManager) Release(_ context.Context, sandbox *Sandbox) {
+func (sm *SandboxManager) Release(_ context.Context, sandbox *Sandbox) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	sb, ok := sm.sandboxes[sandbox.AllocID]
 	if !ok || sb != sandbox {
-		return
+		return nil
 	}
 
+	if sb.refCount.Load() == 0 {
+		return sm.cleanupLocked(sandbox, sb)
+	}
 	remaining := sb.refCount.Add(-1)
 	if remaining > 0 {
 		sm.logger.Info("sandbox still in use", "alloc_id", sandbox.AllocID, "refs", remaining)
-		return
+		return nil
 	}
 
 	if sm.cleanupDelay <= 0 {
-		sm.cleanupLocked(sandbox, sb)
-		return
+		return sm.cleanupLocked(sandbox, sb)
 	}
 
 	sm.logger.Info("scheduling sandbox VM cleanup", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID, "delay", sm.cleanupDelay)
 	sb.cleanupTimer = time.AfterFunc(sm.cleanupDelay, func() {
 		sm.cleanup(sandbox, sb)
 	})
+	return nil
 }
 
 func (sm *SandboxManager) cleanup(sandbox, expected *Sandbox) {
@@ -138,14 +139,14 @@ func (sm *SandboxManager) cleanup(sandbox, expected *Sandbox) {
 	sm.cleanupLocked(sandbox, expected)
 }
 
-func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) {
+func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) error {
 	sb, ok := sm.sandboxes[sandbox.AllocID]
 	if !ok || sb != sandbox || sb != expected || sb.refCount.Load() != 0 {
-		return
+		return nil
 	}
 
 	if sb.cleaning {
-		return
+		return fmt.Errorf("sandbox %s cleanup is incomplete", sb.ID)
 	}
 	sb.cleaning = true
 	sm.mu.Unlock()
@@ -165,9 +166,10 @@ func (sm *SandboxManager) cleanupLocked(sandbox, expected *Sandbox) {
 	sm.mu.Lock()
 	if err != nil {
 		sm.logger.Error("sandbox cleanup failed; allocation remains fenced", "alloc_id", sandbox.AllocID, "sandbox_id", sb.ID, "error", err)
-		return
+		return err
 	}
 	delete(sm.sandboxes, sandbox.AllocID)
+	return nil
 }
 
 // Recover rebuilds sandbox state from a recovered task handle, without

@@ -298,7 +298,7 @@ func (d *Driver) markSandboxDead(allocID string) error {
 	return nil
 }
 
-func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drivers.DriverNetwork, error) {
+func (d *Driver) StartTask(cfg *drivers.TaskConfig) (_ *drivers.TaskHandle, _ *drivers.DriverNetwork, resultErr error) {
 	if cfg.AllocID == "" {
 		return nil, nil, fmt.Errorf("alloc ID is required")
 	}
@@ -341,7 +341,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	succeeded := false
 	defer func() {
 		if !succeeded {
-			d.sandboxMgr.Release(ctx, sandbox)
+			resultErr = errors.Join(resultErr, d.sandboxMgr.Release(ctx, sandbox))
 		}
 	}()
 
@@ -639,7 +639,9 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 	if err := os.RemoveAll(d.taskConfigDir(h.allocID, h.taskName)); err != nil {
 		return fmt.Errorf("removing task configuration: %w", err)
 	}
-	d.sandboxMgr.Release(ctx, h.sandbox)
+	if err := d.sandboxMgr.Release(ctx, h.sandbox); err != nil {
+		return fmt.Errorf("releasing sandbox: %w", err)
+	}
 	d.tasks.Delete(taskID)
 
 	return nil
