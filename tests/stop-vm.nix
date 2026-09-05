@@ -5,6 +5,7 @@
   skipTaskStats ? false,
   traceShim ? false,
   captureConsole ? false,
+  hostCores ? 4,
 }:
 
 let
@@ -64,7 +65,7 @@ pkgs.testers.runNixOSTest {
       imports = [ ../module.nix ];
 
       virtualisation = {
-        cores = 4;
+        cores = hostCores;
         memorySize = 4096;
         diskSize = 8192;
         qemu.options = [
@@ -171,14 +172,18 @@ pkgs.testers.runNixOSTest {
         "STOP_JOB=${jobs.stop} ${pkgs.lib.getExe verify} >/run/stop-verification.log 2>&1; "
         "echo $? >/run/stop-status'"
     )
-    machine.wait_until_succeeds(
-        "grep -q 'stop task reached running readiness' /run/stop-verification.log || test -f /run/stop-status",
-        timeout=120,
-    )
-    print(machine.succeed("cat /run/stop-verification.log"))
-    ${pkgs.lib.optionalString captureConsole ''
-      print("GUEST_CONSOLE_BASE64=" + machine.succeed("base64 -w0 /run/guest-console.log"))
-    ''}
+    try:
+        machine.wait_until_succeeds(
+            "grep -q 'stop task reached running readiness' /run/stop-verification.log || test -f /run/stop-status",
+            timeout=120,
+        )
+    finally:
+        print(machine.succeed("cat /run/stop-verification.log"))
+        ${pkgs.lib.optionalString captureConsole ''
+          console = machine.succeed("base64 -w0 /run/guest-console.log").strip()
+          for offset in range(0, len(console), 1024):
+              print(f"GUEST_CONSOLE_CHUNK={offset}:{console[offset:offset + 1024]}")
+        ''}
     machine.succeed("test ! -f /run/stop-status")
     ${pkgs.lib.optionalString traceShim ''
       shim_pid = int(machine.succeed(

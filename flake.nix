@@ -82,6 +82,11 @@
           inherit pkgs driverPkg kataRuntime;
           captureConsole = true;
         };
+        startup-contended-vm = import ./tests/stop-vm.nix {
+          inherit pkgs driverPkg kataRuntime;
+          captureConsole = true;
+          hostCores = 1;
+        };
         stop-without-stats-vm = stopWithoutStatsVmTest;
       };
 
