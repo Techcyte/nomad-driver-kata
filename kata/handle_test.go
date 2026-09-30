@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad/plugins/drivers"
+	"golang.org/x/sys/unix"
 )
 
 func newTestHandle(t *testing.T, rec *recorder) *taskHandle {
@@ -21,6 +22,43 @@ func newTestHandle(t *testing.T, rec *recorder) *taskHandle {
 		logger:      hclog.NewNullLogger(),
 		startedAt:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		doneCh:      make(chan struct{}),
+	}
+}
+
+func TestLogReaderReplacement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stdout.fifo")
+	if err := unix.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newTestHandle(t, newRecorder())
+	writer, _, err := h.openLogs(path, "")
+	if err != nil {
+		reader.Close()
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString("during replacement\n"); err != nil {
+		t.Fatalf("writing while log reader is replaced: %v", err)
+	}
+	reader, err = os.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	buffer := make([]byte, 64)
+	n, err := reader.Read(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer[:n]) != "during replacement\n" {
+		t.Fatalf("unexpected recovered output: %q", buffer[:n])
 	}
 }
 

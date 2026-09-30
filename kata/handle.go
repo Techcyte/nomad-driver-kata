@@ -109,14 +109,14 @@ func (h *taskHandle) openLogs(stdoutPath, stderrPath string) (*os.File, *os.File
 	var err error
 
 	if stdoutPath != "" {
-		stdout, err = os.OpenFile(stdoutPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+		stdout, err = openLog(stdoutPath)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
 	if stderrPath != "" {
-		stderr, err = os.OpenFile(stderrPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+		stderr, err = openLog(stderrPath)
 		if err != nil {
 			if stdout != nil {
 				stdout.Close()
@@ -126,6 +126,19 @@ func (h *taskHandle) openLogs(stdoutPath, stderrPath string) (*os.File, *os.File
 	}
 
 	return stdout, stderr, nil
+}
+
+func openLog(path string) (*os.File, error) {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	info, err := os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err == nil && info.Mode()&os.ModeNamedPipe != 0 {
+		// Keep a reader present while Nomad replaces its log monitor.
+		flags = os.O_RDWR
+	}
+	return os.OpenFile(path, flags, 0600)
 }
 
 func (h *taskHandle) setExit(code int, err error) {
