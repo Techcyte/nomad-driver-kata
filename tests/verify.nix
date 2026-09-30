@@ -206,6 +206,22 @@ pkgs.writeShellScript "kata-verify" ''
     done
     if [ "$RECOVERY_EXEC" = "RECOVERY_OK" ]; then
       echo "[OK] running Kata task recovered after driver restart"
+      nomad alloc exec -i=false -t=false -task sidecar "$ALLOC_ID" /bin/sh -c 'echo RECOVERED_STDOUT > /proc/1/fd/1; echo RECOVERED_STDERR > /proc/1/fd/2'
+      for i in $(seq 1 15); do
+        RECOVERED_STDOUT=$(nomad alloc logs "$ALLOC_ID" sidecar)
+        RECOVERED_STDERR=$(nomad alloc logs -stderr "$ALLOC_ID" sidecar)
+        if printf '%s\n' "$RECOVERED_STDOUT" | grep -q '^RECOVERED_STDOUT$' \
+          && printf '%s\n' "$RECOVERED_STDERR" | grep -q '^RECOVERED_STDERR$'; then
+          break
+        fi
+        sleep 1
+      done
+      if ! printf '%s\n' "$RECOVERED_STDOUT" | grep -q '^RECOVERED_STDOUT$' \
+        || ! printf '%s\n' "$RECOVERED_STDERR" | grep -q '^RECOVERED_STDERR$'; then
+        echo "[FAIL] recovered task did not deliver both log streams"
+        exit 1
+      fi
+      echo "[OK] recovered task delivered stdout and stderr"
     else
       echo "[FAIL] running Kata task did not recover after driver restart"
       nomad alloc status "$ALLOC_ID" 2>/dev/null || true
