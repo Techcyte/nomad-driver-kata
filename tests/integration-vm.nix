@@ -16,6 +16,7 @@
   pkgs,
   driverPkg,
   kataRuntime,
+  runtimeConfigPath ? "runtime-rs/configuration.toml",
   execTests ? null,
   publishAllocationMetrics ? true,
   restartNomad ? true,
@@ -101,8 +102,8 @@ pkgs.testers.runNixOSTest {
       # Runtime-rs accepts configuration only from its compiled-in locations.
       # Install the Nix-generated configuration through /etc while all runtime
       # assets remain in the immutable store package.
-      environment.etc."kata-containers/runtime-rs/configuration.toml".source =
-        "${kataRuntime}/share/defaults/kata-containers/runtime-rs/configuration.toml";
+      environment.etc."kata-containers/${runtimeConfigPath}".source =
+        "${kataRuntime}/share/defaults/kata-containers/${runtimeConfigPath}";
 
       # containerd resolves containerd-shim-kata-v2 through its own PATH, not
       # the PATH of a later Nomad task. The host integration script prepends
