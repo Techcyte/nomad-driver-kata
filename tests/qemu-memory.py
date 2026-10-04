@@ -71,6 +71,21 @@ def alignment(
 
 
 backend = "memory-backend-file,id=entire-guest-memory-share,mem-path=/dev/shm,size=4M,share=on"
+if "--reject-managed-only" in sys.argv:
+    result = subprocess.run(
+        [qemu, "-machine", "none", "-display", "none", "-object", backend],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 1, (result.returncode, result.stderr)
+    assert result.stdout == "", result.stdout
+    assert result.stderr == (
+        "Kata guest RAM requires /run/kata-memory to be a mounted tmpfs directory; "
+        "mount the dedicated guest RAM tmpfs before launching QEMU\n"
+    ), result.stderr
+    print("Unsafe guest memory backing rejected")
+    sys.exit(0)
 if managed_memory:
     alignment(backend, 2097152, expected_path="/run/kata-memory")
     alignment(backend + ",align=4194304", 4194304, expected_path="/run/kata-memory")

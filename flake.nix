@@ -96,6 +96,9 @@
           restartNomad = false;
           restartTask = false;
         };
+        qemu-memory-vm = import ./tests/qemu-memory-vm.nix {
+          inherit pkgs kataRuntime;
+        };
         stop-vm = stopVmTest;
         startup-console-vm = import ./tests/stop-vm.nix {
           inherit pkgs driverPkg kataRuntime;

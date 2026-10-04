@@ -8,6 +8,22 @@
 # /run/kata-memory is a dedicated host tmpfs with huge=within_size, mounted
 # declaratively before Nomad starts. Host /dev/shm policy is left untouched.
 # Only guest RAM is adjusted, never the read-only image/PMEM backend.
+require_guest_memory() {
+	local target filesystem mounted=false
+	if [[ -d /run/kata-memory ]]; then
+		while read -r _ target filesystem _; do
+			if [[ "$target" == /run/kata-memory && "$filesystem" == tmpfs ]]; then
+				mounted=true
+				break
+			fi
+		done < /proc/self/mounts
+	fi
+	if [[ "$mounted" != true ]]; then
+		printf '%s\n' 'Kata guest RAM requires /run/kata-memory to be a mounted tmpfs directory; mount the dedicated guest RAM tmpfs before launching QEMU' >&2
+		exit 1
+	fi
+}
+
 args=()
 object=false
 for arg in "$@"; do
@@ -17,6 +33,7 @@ for arg in "$@"; do
 			if [[ ",$arg," == *,id=entire-guest-memory-share,* &&
 				",$arg," == *,mem-path=/dev/shm,* &&
 				",$arg," == *,share=on,* ]]; then
+				require_guest_memory
 				arg=",$arg,"
 				arg=${arg/,mem-path=\/dev\/shm,/,mem-path=\/run\/kata-memory,}
 				arg=${arg#,}
