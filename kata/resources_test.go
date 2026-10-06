@@ -3,6 +3,8 @@ package kata
 import (
 	"testing"
 
+	"github.com/hashicorp/nomad/client/lib/numalib"
+	"github.com/hashicorp/nomad/plugins/base"
 	"github.com/hashicorp/nomad/plugins/drivers"
 )
 
@@ -22,6 +24,15 @@ func TestSandboxResourcesUseAllocationBudget(t *testing.T) {
 		if got := annotations["io.kubernetes.cri.sandbox-cpu-quota"]; got != "800000" {
 			t.Fatalf("sandbox CPU quota = %q, want 8 vCPUs", got)
 		}
+	}
+}
+
+func TestSandboxCPUCountUsesClientTopology(t *testing.T) {
+	config := &base.Config{AgentConfig: &base.AgentConfig{Driver: &base.ClientDriverConfig{
+		Topology: &numalib.Topology{Cores: make([]numalib.Core, 8)},
+	}}}
+	if got := sandboxCPUCount(config); got != 8 {
+		t.Fatalf("sandbox CPUs = %d, want 8 client logical CPUs", got)
 	}
 }
 

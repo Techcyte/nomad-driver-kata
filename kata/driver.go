@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +58,7 @@ type Driver struct {
 	stateDir         string
 	imagePullTimeout time.Duration
 	gcTickerInterval time.Duration
+	sandboxCPUs      int
 }
 
 type taskStore struct {
@@ -158,6 +158,7 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	}
 
 	d.config = &config
+	d.sandboxCPUs = sandboxCPUCount(cfg)
 
 	if config.ConsulGRPCAddr != "" {
 		if _, _, err := net.SplitHostPort(config.ConsulGRPCAddr); err != nil {
@@ -335,7 +336,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (_ *drivers.TaskHandle, _ *d
 		d.logger.Info("using network namespace", "path", netNS)
 	}
 
-	sizing, err := sandboxResources(cfg, runtime.NumCPU(), 256)
+	vcpus := d.sandboxCPUs
+	if vcpus == 0 {
+		vcpus = sandboxCPUCount(&base.Config{})
+	}
+	sizing, err := sandboxResources(cfg, vcpus, 256)
 	if err != nil {
 		return nil, nil, err
 	}

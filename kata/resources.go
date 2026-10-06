@@ -3,10 +3,22 @@ package kata
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
+
+	"github.com/hashicorp/nomad/plugins/base"
 
 	"github.com/hashicorp/nomad/plugins/drivers"
 )
+
+func sandboxCPUCount(config *base.Config) int {
+	if config.AgentConfig != nil && config.AgentConfig.Driver != nil && config.AgentConfig.Driver.Topology != nil {
+		if count := config.AgentConfig.Driver.Topology.NumCores(); count > 0 {
+			return count
+		}
+	}
+	return runtime.NumCPU()
+}
 
 func sandboxResources(cfg *drivers.TaskConfig, vcpus int, overheadMB int64) (map[string]string, error) {
 	memoryMB, err := strconv.ParseInt(cfg.Env["NOMAD_ALLOC_MEMORY_LIMIT"], 10, 64)
