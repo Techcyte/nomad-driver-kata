@@ -35,7 +35,9 @@ stdenvNoCC.mkDerivation {
       ./opt/kata
 
     substituteInPlace "$out/share/defaults/kata-containers/runtime-rs/"*.toml \
-      --replace-warn '/opt/kata/' "$out/"
+      --replace-warn '/opt/kata/' "$out/" \
+      --replace-warn 'overhead_vcpus = 0.2' 'overhead_vcpus = 0.0' \
+      --replace-warn 'overhead_memory = 32' 'overhead_memory = 0'
     rm "$out/share/defaults/kata-containers/configuration.toml"
 
     mkdir -p "$out/libexec/kata-containers" "$out/bin"

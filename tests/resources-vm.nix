@@ -32,7 +32,8 @@ let
           config {
             image = "kata-resource-test:test"
             command = "sh"
-            args = ["-c", "sleep infinity"]
+            cap_add = ["SYS_ADMIN"]
+            args = ["-c", "mkdir /run/cgroup; mount -t cgroup2 none /run/cgroup; { nproc; awk '/MemTotal/ {print $2}' /proc/meminfo; cat /run/cgroup$(awk -F: '$1 == 0 {print $3}' /proc/self/cgroup)/memory.max; } > /alloc/measurements; sleep infinity"]
           }
           resources {
             cpu = 100
@@ -66,6 +67,11 @@ pkgs.testers.runNixOSTest {
       extraSettingsPlugins = [ driverPkg ];
       settings = {
         bind_addr = "127.0.0.1";
+        advertise = {
+          http = "127.0.0.1";
+          rpc = "127.0.0.1";
+          serf = "127.0.0.1";
+        };
         server = {
           enabled = true;
           bootstrap_expect = 1;
@@ -78,7 +84,7 @@ pkgs.testers.runNixOSTest {
       enable = true;
       package = driverPkg;
       containerdAddr = "/run/containerd/containerd.sock";
-      pauseImage = "kata-resource-test:test";
+      pauseImage = "docker.io/library/kata-resource-test:test";
     };
     environment.systemPackages = [ pkgs.containerd nomadPkg pkgs.jq ];
     boot.kernelModules = [ "kvm" "vhost_vsock" ];
@@ -89,18 +95,33 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("containerd.service")
     machine.succeed("ctr images import ${image}")
     machine.wait_for_unit("nomad.service")
-    machine.wait_until_succeeds("nomad node status")
-    machine.succeed("nomad job run ${job}")
-    machine.wait_until_succeeds("nomad job allocs -json resources | jq -e 'any(.[]; .ClientStatus == \"running\")'", timeout=120)
+    try:
+        machine.wait_until_succeeds("nomad node status", timeout=30)
+    except Exception:
+        print(machine.execute("journalctl -u nomad --no-pager -n 100")[1])
+        print(machine.execute("cat /etc/nomad.json")[1])
+        raise
+    machine.succeed("nomad job run -detach ${job}")
+    try:
+        machine.wait_until_succeeds("nomad job allocs -json resources | jq -e 'any(.[]; .ClientStatus == \"running\")'", timeout=120)
+    except Exception:
+        print(machine.execute("nomad job allocs -json resources")[1])
+        print(machine.execute("ps -ww -C qemu-system-x86_64 -o args=")[1])
+        print(machine.execute("journalctl -u nomad -u containerd --no-pager -n 100")[1])
+        raise
     alloc = json.loads(machine.succeed("nomad job allocs -json resources"))[0]["ID"]
-    def guest(command):
-        return machine.succeed(f"nomad alloc exec -task work {alloc} sh -c '{command}'").strip()
-    machine.wait_until_succeeds(f"nomad alloc exec -task work {alloc} true", timeout=120)
-    cpus = int(guest("nproc"))
-    memory_kib = int(guest("awk \"/MemTotal/ {{print \\$2}}\" /proc/meminfo"))
+    path = f"/var/lib/nomad/alloc/{alloc}/alloc/measurements"
+    try:
+        machine.wait_until_succeeds(f"test $(wc -l < {path}) -eq 3", timeout=30)
+    except Exception:
+        print(machine.execute(f"cat {path}; find /var/lib/nomad/alloc/{alloc} -name measurements; nomad alloc logs -stderr -task work {alloc}")[1])
+        raise
+    measurements = machine.succeed(f"cat {path}").splitlines()
+    cpus = int(measurements[0])
+    memory_kib = int(measurements[1])
     assert cpus == 4, f"guest has {cpus} CPUs, expected host's 4"
     assert 1600 * 1024 < memory_kib < 1800 * 1024, f"guest RAM {memory_kib} KiB, expected 1536 + 256 MiB minus kernel overhead"
-    assert guest("cat /sys/fs/cgroup/memory.max") == str(1536 * 1024 * 1024)
+    assert measurements[2] == str(1536 * 1024 * 1024)
     machine.succeed("nomad job stop -purge resources")
   '';
 }
