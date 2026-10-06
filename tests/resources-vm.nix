@@ -20,7 +20,7 @@ let
           config {
             image = "kata-resource-test:test"
             command = "sh"
-            args = ["-c", "true"]
+            args = ["-c", "{ nproc; awk '/MemTotal/ {print $2}' /proc/meminfo; } > /alloc/prestart-measurements"]
           }
           resources {
             cpu = 100
@@ -117,6 +117,8 @@ pkgs.testers.runNixOSTest {
         print(machine.execute(f"cat {path}; find /var/lib/nomad/alloc/{alloc} -name measurements; nomad alloc logs -stderr -task work {alloc}")[1])
         raise
     measurements = machine.succeed(f"cat {path}").splitlines()
+    prestart = machine.succeed(f"cat /var/lib/nomad/alloc/{alloc}/alloc/prestart-measurements").splitlines()
+    assert prestart[:2] == measurements[:2], f"prestart/main guest sizing differs: {prestart} / {measurements}"
     cpus = int(measurements[0])
     memory_kib = int(measurements[1])
     assert cpus == 4, f"guest has {cpus} CPUs, expected host's 4"
