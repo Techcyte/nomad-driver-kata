@@ -20,7 +20,7 @@ func TestSandboxGetOrCreate(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
-	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatalf("GetOrCreate: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestSandboxHostname(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
-	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "my-group")
+	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "my-group", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestSandboxNetNS(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
-	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "/var/run/netns/test", "")
+	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "/var/run/netns/test", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestSandboxCreatesContainerdSandboxMetadata(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
-	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	_, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +112,8 @@ func TestSandboxReuse(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
-	sb1, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
-	sb2, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb1, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
+	sb2, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 
 	if sb1.ID != sb2.ID {
 		t.Fatalf("expected same sandbox, got %q and %q", sb1.ID, sb2.ID)
@@ -134,8 +134,8 @@ func TestSandboxReleaseDefersCleanup(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 20*time.Millisecond)
 	ctx := context.Background()
 
-	sandbox, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
-	mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sandbox, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
+	mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 
 	mgr.Release(ctx, sandbox)
 	if rec.called("Cleanup") || rec.called("DeleteSandboxMetadata") {
@@ -164,13 +164,13 @@ func TestSandboxReuseCancelsDeferredCleanup(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 20*time.Millisecond)
 	ctx := context.Background()
 
-	first, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	first, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatalf("GetOrCreate first task: %v", err)
 	}
 	mgr.Release(ctx, first)
 
-	second, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	second, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatalf("GetOrCreate poststop task: %v", err)
 	}
@@ -201,9 +201,9 @@ func TestSandboxReleaseIgnoresPreviousGeneration(t *testing.T) {
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
 
-	previous, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	previous, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	mgr.Release(ctx, previous)
-	current, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	current, _ := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	cleanupCount := rec.callCount("Cleanup")
 
 	mgr.Release(ctx, previous)

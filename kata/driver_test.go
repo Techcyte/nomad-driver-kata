@@ -658,6 +658,7 @@ func testTaskConfig(t *testing.T, taskCfg *TaskConfig) *drivers.TaskConfig {
 		AllocID:       "alloc-1",
 		Name:          "web",
 		TaskGroupName: "group",
+		Env:           map[string]string{"NOMAD_ALLOC_MEMORY_LIMIT": "1024"},
 	}
 	if err := cfg.EncodeConcreteDriverConfig(taskCfg); err != nil {
 		t.Fatalf("encoding driver config: %v", err)
@@ -972,6 +973,7 @@ func TestStartTaskVolumeRelativePath(t *testing.T) {
 		Name:          "web",
 		TaskGroupName: "group",
 		AllocDir:      "/opt/nomad/alloc/abc123",
+		Env:           map[string]string{"NOMAD_ALLOC_MEMORY_LIMIT": "1024"},
 	}
 	if err := cfg.EncodeConcreteDriverConfig(taskCfg); err != nil {
 		t.Fatalf("encoding driver config: %v", err)
@@ -2094,6 +2096,7 @@ func TestStartTaskRewritesBootstrap(t *testing.T) {
 		Name:          "connect-proxy",
 		TaskGroupName: "group",
 		AllocDir:      allocDir,
+		Env:           map[string]string{"NOMAD_ALLOC_MEMORY_LIMIT": "1024"},
 	}
 	if err := cfg.EncodeConcreteDriverConfig(taskCfg); err != nil {
 		t.Fatalf("encoding driver config: %v", err)

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -334,7 +335,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (_ *drivers.TaskHandle, _ *d
 		d.logger.Info("using network namespace", "path", netNS)
 	}
 
-	sandbox, err := d.sandboxMgr.GetOrCreate(ctx, cfg.AllocID, d.config.PauseImage, d.config.Runtime, netNS, cfg.TaskGroupName)
+	sizing, err := sandboxResources(cfg, runtime.NumCPU(), 256)
+	if err != nil {
+		return nil, nil, err
+	}
+	sandbox, err := d.sandboxMgr.GetOrCreate(ctx, cfg.AllocID, d.config.PauseImage, d.config.Runtime, netNS, cfg.TaskGroupName, sizing)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox setup: %w", err)
 	}

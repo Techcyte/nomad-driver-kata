@@ -33,7 +33,7 @@ func TestSandboxCleanupFailureRetainsAllocation(t *testing.T) {
 	rec := newRecorder()
 	mgr := NewSandboxManager(&failedCleanup{Containerd: rec}, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
-	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestSandboxCleanupFailureRetainsAllocation(t *testing.T) {
 	if rec.called("DeleteSandboxMetadata") {
 		t.Fatal("failed cleanup deleted sandbox metadata")
 	}
-	if _, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", ""); err == nil {
+	if _, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil); err == nil {
 		t.Fatal("failed cleanup allowed sandbox reuse or replacement")
 	}
 	if mgr.Recover("alloc-1", sb.ID) != nil {
@@ -53,7 +53,7 @@ func TestSandboxCleanupDoesNotBlockOtherAllocations(t *testing.T) {
 	c := &blockedCleanup{Containerd: newRecorder(), entered: make(chan struct{}), release: make(chan struct{})}
 	mgr := NewSandboxManager(c, hclog.NewNullLogger(), 0)
 	ctx := context.Background()
-	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestSandboxCleanupDoesNotBlockOtherAllocations(t *testing.T) {
 	}()
 	<-c.entered
 	defer func() { close(c.release); <-done }()
-	if _, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", ""); err == nil {
+	if _, err := mgr.GetOrCreate(ctx, "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil); err == nil {
 		t.Fatal("allocation reused sandbox during cleanup")
 	}
 	if recovered := mgr.Recover("alloc-1", sb.ID); recovered != nil {
@@ -72,7 +72,7 @@ func TestSandboxCleanupDoesNotBlockOtherAllocations(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		_, err := mgr.GetOrCreate(ctx, "alloc-2", "pause:3.9", "io.containerd.kata.v2", "", "")
+		_, err := mgr.GetOrCreate(ctx, "alloc-2", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 		result <- err
 	}()
 	select {

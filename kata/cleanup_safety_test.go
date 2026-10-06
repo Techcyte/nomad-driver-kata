@@ -42,7 +42,7 @@ func TestFailedSandboxStartRetainsFailedCleanup(t *testing.T) {
 	rec := newRecorder()
 	mgr := NewSandboxManager(&failedSandboxStart{Containerd: &failedCleanup{Containerd: rec}}, hclog.NewNullLogger(), 0)
 	mgr.stateDir = t.TempDir()
-	if _, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", ""); err == nil {
+	if _, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil); err == nil {
 		t.Fatal("sandbox startup succeeded")
 	}
 	if !mgr.cleanupPending("alloc-1") {
@@ -98,7 +98,7 @@ func TestMarkSandboxDeadPreservesMetadataOnCleanupFailure(t *testing.T) {
 func TestSandboxCleanupClearsFenceAfterSuccess(t *testing.T) {
 	mgr := NewSandboxManager(newRecorder(), hclog.NewNullLogger(), 0)
 	mgr.stateDir = t.TempDir()
-	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestSandboxCleanupDoesNotProceedWithoutFence(t *testing.T) {
 	rec := newRecorder()
 	mgr := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	mgr.stateDir = t.TempDir()
-	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestSandboxCleanupDoesNotProceedWithoutFence(t *testing.T) {
 
 func TestSandboxReleaseReportsCleanupFailure(t *testing.T) {
 	mgr := NewSandboxManager(&failedCleanup{Containerd: newRecorder()}, hclog.NewNullLogger(), 0)
-	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,14 +150,14 @@ func TestSandboxCleanupFenceSurvivesManagerRestart(t *testing.T) {
 	rec := newRecorder()
 	mgr := NewSandboxManager(&failedCleanup{Containerd: rec}, hclog.NewNullLogger(), 0)
 	mgr.stateDir = t.TempDir()
-	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "")
+	sb, err := mgr.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	mgr.Release(context.Background(), sb)
 	restarted := NewSandboxManager(rec, hclog.NewNullLogger(), 0)
 	restarted.stateDir = mgr.stateDir
-	if _, err := restarted.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", ""); err == nil {
+	if _, err := restarted.GetOrCreate(context.Background(), "alloc-1", "pause:3.9", "io.containerd.kata.v2", "", "", nil); err == nil {
 		t.Fatal("manager restart allowed reuse after failed cleanup")
 	}
 	if restarted.Recover("alloc-1", sb.ID) != nil {

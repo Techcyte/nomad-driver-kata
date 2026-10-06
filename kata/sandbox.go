@@ -45,7 +45,7 @@ func sandboxID(allocID string) string {
 
 // GetOrCreate returns an existing sandbox for the allocation or boots a new
 // Kata VM. The caller must eventually call Release for each GetOrCreate.
-func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, runtime, netNS, hostname string) (*Sandbox, error) {
+func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, runtime, netNS, hostname string, sizing map[string]string) (*Sandbox, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if sm.cleanupPending(allocID) {
@@ -72,15 +72,17 @@ func (sm *SandboxManager) GetOrCreate(ctx context.Context, allocID, pauseImage, 
 		return nil, fmt.Errorf("ensuring pause image: %w", err)
 	}
 
+	annotations := map[string]string{"io.kubernetes.cri-o.ContainerType": "sandbox"}
+	for key, value := range sizing {
+		annotations[key] = value
+	}
 	if err := sm.ctr.CreateContainer(ctx, &ContainerConfig{
-		ID:       id,
-		Image:    pauseImage,
-		Runtime:  runtime,
-		NetNS:    netNS,
-		Hostname: hostname,
-		Annotations: map[string]string{
-			"io.kubernetes.cri-o.ContainerType": "sandbox",
-		},
+		ID:          id,
+		Image:       pauseImage,
+		Runtime:     runtime,
+		NetNS:       netNS,
+		Hostname:    hostname,
+		Annotations: annotations,
 	}); err != nil {
 		return nil, fmt.Errorf("creating sandbox container: %w", err)
 	}
