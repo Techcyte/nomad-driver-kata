@@ -315,10 +315,7 @@ func (c *containerdClient) CreateContainer(ctx context.Context, cfg *ContainerCo
 			Soft: soft,
 			Hard: hard,
 		}
-		specOpts = append(specOpts, func(_ context.Context, _ oci.Client, _ *containers.Container, s *oci.Spec) error {
-			s.Process.Rlimits = append(s.Process.Rlimits, rlimit)
-			return nil
-		})
+		specOpts = append(specOpts, withProcessLimit(rlimit))
 	}
 
 	containerOpts := []containerd.NewContainerOpts{
