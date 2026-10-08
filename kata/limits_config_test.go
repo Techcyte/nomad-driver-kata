@@ -31,7 +31,7 @@ func TestTaskFileLimitDecoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(job.TaskGroups[0].Tasks[0].Config)
+	data, err := json.Marshal(map[string]interface{}{"Config": job.TaskGroups[0].Tasks[0].Config})
 	if err != nil {
 		t.Fatal(err)
 	}
