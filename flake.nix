@@ -16,7 +16,7 @@
         pname = "nomad-driver-kata";
         version = "0.1.0";
         src = ./.;
-        vendorHash = "sha256-RplDmsBNxGOkI40eFRXpa/+P01Ap1hk4NhPATZKiU80=";
+        vendorHash = "sha256-RIB1rfyieofd2gvDvJlMKJo+q8phmuM+9/oBildreAI=";
         env.CGO_ENABLED = 0;
         ldflags = [
           "-s"
