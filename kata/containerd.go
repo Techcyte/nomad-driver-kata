@@ -531,6 +531,10 @@ func (c *containerdClient) ExecStreaming(ctx context.Context, id, execID string,
 	pspec.Args = cmd
 	pspec.Terminal = tty
 
+	input := &execInput{reader: stdin, eof: make(chan struct{})}
+	if stdin != nil && !tty {
+		stdin = input
+	}
 	process, err := task.Exec(ctx, execID, &pspec, cio.NewCreator(cio.WithStreams(stdin, stdout, stderr)))
 	if err != nil {
 		return -1, fmt.Errorf("exec streaming in %s: %w", id, err)
@@ -545,6 +549,21 @@ func (c *containerdClient) ExecStreaming(ctx context.Context, id, execID string,
 	if err := process.Start(ctx); err != nil {
 		process.Delete(ctx)
 		return -1, err
+	}
+
+	finished := make(chan struct{})
+	defer close(finished)
+	if stdin != nil && !tty {
+		go func() {
+			select {
+			case <-input.eof:
+				if err := process.CloseIO(ctx, containerd.WithStdinCloser); err != nil && ctx.Err() == nil {
+					c.logger.Warn("close exec stdin", "exec_id", execID, "error", err)
+				}
+			case <-finished:
+			case <-ctx.Done():
+			}
+		}()
 	}
 
 	status := <-exitCh

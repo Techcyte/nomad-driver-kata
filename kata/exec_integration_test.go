@@ -22,7 +22,7 @@ func TestExecStdinEOF(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	for _, input := range []string{"", "eof-probe"} {
+	for _, input := range []string{"", "eof-probe", strings.Repeat("x", 4*1024*1024)} {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		var output, stderr bytes.Buffer
 		code, err := client.ExecStreaming(ctx, containerID, fmt.Sprintf("stdin-eof-%d", time.Now().UnixNano()), []string{"/bin/sh", "-c", "timeout 5 wc -c"}, false, strings.NewReader(input), &output, &stderr)
