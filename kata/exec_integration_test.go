@@ -1,7 +1,9 @@
 package kata
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -9,6 +11,27 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 )
+
+func TestExecStdinEOF(t *testing.T) {
+	containerID := os.Getenv("KATA_EXEC_CONTAINER")
+	if containerID == "" {
+		t.Skip("requires a running Kata container")
+	}
+	client, err := NewContainerdClient(os.Getenv("CONTAINERD_SOCK"), "default", hclog.NewNullLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	for _, input := range []string{"", "eof-probe"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		var output, stderr bytes.Buffer
+		code, err := client.ExecStreaming(ctx, containerID, fmt.Sprintf("stdin-eof-%d", time.Now().UnixNano()), []string{"/bin/sh", "-c", "timeout 5 wc -c"}, false, strings.NewReader(input), &output, &stderr)
+		cancel()
+		if err != nil || code != 0 || strings.TrimSpace(output.String()) != fmt.Sprint(len(input)) || stderr.Len() != 0 {
+			t.Fatalf("stdin bytes=%d: code=%d output=%q stderr=%q error=%v", len(input), code, output.String(), stderr.String(), err)
+		}
+	}
+}
 
 func TestExecOutputDrain(t *testing.T) {
 	containerID := os.Getenv("KATA_EXEC_CONTAINER")
